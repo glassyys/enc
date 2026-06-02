@@ -148,12 +148,17 @@ def check_query_process(file_path: str, output_dir: str):
     
     csv_rows = []
     all_valid = True
+    total_count = 0
+    success_count = 0
+    error_count = 0
     
     for line_num, line in enumerate(lines, start=1):
         clean_query = line.strip()
         if not clean_query:
             continue
             
+        total_count += 1
+        
         # 검증 함수 실행
         res = validate_query(clean_query)
         status_str = "정상" if res["is_valid"] else "오류"
@@ -161,10 +166,12 @@ def check_query_process(file_path: str, output_dir: str):
         # 1) 로그 파일용 라인 작성
         if res["is_valid"]:
             log_lines.append(f"[Line {line_num:02d}] 성공 - 정상적인 쿼리")
+            success_count += 1
         else:
             log_lines.append(f"[Line {line_num:02d}] 실패 - {res['message']} (기호: {res['error_char']}, 위치: {res['error_pos']})")
             log_lines.append(f"  └─ 오류 쿼리문: {clean_query}")
             all_valid = False
+            error_count += 1
             
         # 2) CSV 파일용 행 데이터 구조화
         csv_rows.append({
@@ -177,6 +184,14 @@ def check_query_process(file_path: str, output_dir: str):
         })
 
     log_lines.append(f"\n" + "="*40)
+    log_lines.append(f"[검증 결과 요약]")
+    log_lines.append(f"- 총 검사 건수: {total_count}건")
+    log_lines.append(f"- 정상 건수: {success_count}건")
+    log_lines.append(f"- 오류 건수: {error_count}건")
+    log_lines.append(f"- 결과 로그 파일: {log_filepath}")
+    log_lines.append(f"- 결과 데이터 파일: {csv_filepath}")
+    log_lines.append(f"-"*40)
+
     if all_valid:
         log_lines.append("최종 결과: 모든 쿼리 문장이 정상입니다.")
     else:
@@ -198,9 +213,16 @@ def check_query_process(file_path: str, output_dir: str):
             writer.writeheader()
             writer.writerows(csv_rows)
             
-        print(f"\n[검증 프로세스 완료]")
-        print(f"- 결과 로그 파일: {log_filepath}")
-        print(f"- 결과 데이터 파일: {csv_filepath}")
+        print(f"\n" + "-"*80)
+        print(f" [검증 프로세스 완료]")
+        print(f"-"*80)
+        print(f" - 총 검사 건수: {total_count}건")
+        print(f" - 정상 건수: {success_count}건")
+        print(f" - 오류 건수: {error_count}건")
+        print(f"-"*80)
+        print(f" - 결과 로그 파일: {log_filepath}")
+        print(f" - 결과 데이터 파일: {csv_filepath}")
+        print(f"-"*80)
     except Exception as e:
         print(f"[오류] CSV 파일 작성 중 예외 발생: {e}")
 
