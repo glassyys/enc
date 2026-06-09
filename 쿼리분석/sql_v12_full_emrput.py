@@ -1,13 +1,13 @@
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID/SRC/SIDHUB --mode SIMPLE --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID/SRC/SIDHUB --mode DETAIL --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TMT --mode SIMPLE --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TMT --mode DETAIL --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDIA --mode SIMPLE --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDIA --mode DETAIL --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDM --mode SIMPLE --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDM --mode DETAIL --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID --mode SIMPLE --db
-## python3 /home/p190872/spsrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID --mode DETAIL --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID/SRC/SIDHUB --mode SIMPLE --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID/SRC/SIDHUB --mode DETAIL --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TMT --mode SIMPLE --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TMT --mode DETAIL --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDIA --mode SIMPLE --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDIA --mode DETAIL --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDM --mode SIMPLE --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/TDM --mode DETAIL --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID --mode SIMPLE --db
+## python3 /home/p190872/chksrc/sql_v12_full_emrput.py /NAS/MIDP/DBMSVC/MIDP/SID --mode DETAIL --db
 ## 
 ## 1~4번 내용대로 처리하여 수정한 파이썬 전체소스
 ## 
