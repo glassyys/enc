@@ -1,23 +1,44 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================
-# sql_find_v001.py
+# sql_find_v001_01.py
 #
+# ■ 버전 이력
+# ─────────────────────────────────────────────────────────────
+# v001_01 (2026-06-10)
+#   1) CSV파일 읽기 위치 변경: out 디렉토리 → in 디렉토리로 변경
+#   2) 검색할 칼럼리스트를 파일 읽은 후 실행시 검색 단어 목록 번호와 함께 표시
+#   3) CSV파일명 출력시 경로 포함 (스크립트 디렉토리 + 파일명)
+#   4) DB 테이블 적재 전 결과를 별도 CSV 파일로 저장
+#      - 파일명: {테이블명}.csv (DB 스키마 제외)
+#      - 저장 위치: 스크립트 실행 디렉토리
+#      - 저장 데이터: 매칭 결과 전체
+#   5) 파일명 변경: sql_find_v001.py → sql_find_v001_01.py
+#
+# v001 (기존)
+#   - out 디렉토리에서 CSV 파일 읽음
+#   - 검색 단어 개수만 표시
+#   - CSV 파일명만 출력
+#   - DB 직접 적재
+# 
 # 실행예시:
-#   python3 sql_find_v001.py <검색대상_디렉토리> <CSV파일명> <검색할_칼럼명> [--conf mysql.conf 경로]
+#   python3 sql_find_v001_01.py <검색대상_디렉토리> <CSV파일명> <검색할_칼럼명> [--conf mysql.conf 경로]
 #
 # 예시:
-#   python3 sql_find_v001.py /NAS/MIDP/DBMSVC/MIDP/SID/SRC/SIDHUB target_tables.csv target_table
-#   python3 sql_find_v001.py /NAS/MIDP/DBMSVC/MIDP/TMT key_list_001.csv key_list key_list_001
+#   python3 sql_find_v001_01.py /NAS/MIDP/DBMSVC/MIDP/SID/SRC/SIDHUB target_tables.csv target_table
+#   python3 sql_find_v001_01.py /NAS/MIDP/DBMSVC/MIDP/TMT key_list_001.csv key_list key_list_001
 #
-# 설명:
-# 2. find소스(sql_find_v001.py)
-# 1) 실행시 검색할디렉토리와 csv파일명 칼럼명 파라미터로 설정
-# 2) 소스하위디렉토리 out 내부의 .csv 파일을 읽기
-# 3) 첫번재 행을 칼럼명으로 인식해서 실행시 지정된 칼럼명을 지정하면 첫번째 이후 행의 단어리스트를 메모리저장후
-# 4) 실행시 디렉토리하위 소스 내용 읽는다
-# 5) 3)번에서 저장한 단어 기준으로 라인의 정보와 소스와 디렉토리 정보를 테이블에 등록
-# 6) 테이블명은 기존소스 규칙대로 지정
+# ■ 프로그램 설명
+# ─────────────────────────────────────────────────────────────
+# find 소스 (sql_find_v001_01.py)
+# 1) 실행시 검색대상 디렉토리, CSV 파일명, 칼럼명을 파라미터로 전달
+# 2) 소스하위 'in' 디렉토리에서 지정된 CSV 파일을 읽기 [v001_01 변경]
+# 3) CSV 첫번째 행을 칼럼명으로 인식하고, 지정된 칼럼의 데이터를 단어 리스트로 메모리 저장
+# 4) 실행시 지정된 디렉토리 하위의 모든 소스 파일 (.sql, .hql, .uld, .ld, .sh) 스캔
+# 5) 저장된 단어 기준으로 소스 라인과 매칭하여 결과 수집
+# 6) 매칭 결과를 임시 CSV 파일로 저장 (테이블명.csv) [v001_01 추가]
+# 7) 매칭 결과를 MySQL 테이블에 등록 (동적 테이블명 생성)
+# 8) 테이블명 규칙: {프로그램명}_{마지막디렉토리명}
 # ===============================================================
 
 import os
@@ -28,10 +49,11 @@ from datetime import datetime
 
 # ============================================================
 # 프로그램명 / 디렉토리 경로 설정
+# [변경: OUT_DIR -> IN_DIR]
 # ============================================================
 PROGRAM_NAME    = os.path.splitext(os.path.basename(sys.argv[0]))[0]
 SCRIPT_DIR      = os.path.dirname(os.path.abspath(sys.argv[0]))
-OUT_DIR         = os.path.join(SCRIPT_DIR, "out")
+IN_DIR          = os.path.join(SCRIPT_DIR, "in")  # [변경: out -> in]
 MYSQL_CONF_FILE = "mysql.conf"
 
 # 대상 확장자 규칙 (기존 소스 기준)
@@ -182,6 +204,36 @@ def build_dynamic_table_name(source_dir: str) -> str:
     return f"{PROGRAM_NAME}_{last_dir}"
 
 # ============================================================
+# CSV 파일로 결과 저장 함수 [추가: 2026-06-10]
+# ============================================================
+def save_results_to_csv(rows_buffer: list, table_name: str, script_dir: str) -> str:
+    """
+    DB 적재 전 검색 결과를 CSV 파일로 저장
+    파일명: {테이블명}.csv (스키마 제외)
+    """
+    csv_output_path = os.path.join(script_dir, f"{table_name}.csv")
+    
+    try:
+        with open(csv_output_path, "w", encoding="utf-8", newline="") as f:
+            if not rows_buffer:
+                # 빈 버퍼일 경우 헤더만 저장
+                writer = csv.DictWriter(f, fieldnames=[
+                    "base_directory", "file_name", "dir_file",
+                    "line_no", "line_content", "search_column", "matched_word"
+                ])
+                writer.writeheader()
+            else:
+                # 결과 데이터 저장
+                fieldnames = rows_buffer[0].keys()
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows_buffer)
+        
+        return csv_output_path
+    except Exception as e:
+        raise Exception(f"CSV 파일 저장 실패 ({csv_output_path}): {e}")
+
+# ============================================================
 # DB 적재 (CREATE IF NOT EXISTS → BATCH INSERT)
 # ============================================================
 def db_insert_matches(rows_buffer: list, run_id: str, op_dtm: str,
@@ -301,19 +353,19 @@ def main():
     print(" [소스 키워드 탐색 시작]")
     print("=" * 60)
     print(f"  검색 대상 디렉토리 : {search_dir}")
-    print(f"  CSV 파일명         : {csv_filename}")
+    print(f"  CSV 파일경로       : {os.path.join(IN_DIR, csv_filename)}")  # [변경: 경로포함 출력]
     print(f"  검색 기준 칼럼명   : {column_name}")
     print(f"  적재할 DB 테이블   : {mysql_conf.get('database', '')}.{table_name}")
     print(f"  처리일시 (op_dtm)  : {op_dtm}")
     print("-" * 60)
 
-    # 1. out 디렉토리 하위 특정 .csv 파일을 읽어 단어 리스트 추출
-    if not os.path.isdir(OUT_DIR):
-        print(f"[ERROR] 'out' 디렉토리가 존재하지 않습니다: {OUT_DIR}")
-        print("        먼저 sql_unload_v001.py 등으로 CSV 파일들을 생성하십시오.")
+    # 1. in 디렉토리 하위 특정 .csv 파일을 읽어 단어 리스트 추출 [변경: out -> in]
+    if not os.path.isdir(IN_DIR):
+        print(f"[ERROR] 'in' 디렉토리가 존재하지 않습니다: {IN_DIR}")  # [변경: out -> in]
+        print("        먼저 소스하위 in 디렉토리에 CSV 파일들을 배치하십시오.")  # [변경]
         sys.exit(1)
 
-    csv_path = os.path.join(OUT_DIR, csv_filename)
+    csv_path = os.path.join(IN_DIR, csv_filename)  # [변경: OUT_DIR -> IN_DIR]
     if not os.path.isfile(csv_path):
         print(f"[ERROR] 지정한 CSV 파일이 존재하지 않습니다: {csv_path}")
         sys.exit(1)
@@ -332,7 +384,7 @@ def main():
                     if val_clean:
                         search_words.add(val_clean)
                         count_in_file += 1
-        print(f"  - {csv_filename}: '{column_name}' 컬럼에서 {count_in_file:,}개 단어 추출 완료")
+        print(f"  - {csv_path}: '{column_name}' 컬럼에서 {count_in_file:,}개 단어 추출 완료")  # [변경: 경로포함]
     except Exception as e:
         print(f"  - [WARN] {csv_filename} 파일 읽기 실패: {e}")
 
@@ -341,6 +393,10 @@ def main():
         sys.exit(1)
 
     print(f"[INFO] 메모리에 저장된 검색 단어 개수: {len(search_words):,} 개")
+    # [추가: 검색 단어 목록 표시]
+    print("[INFO] 검색할 칼럼리스트:")
+    for idx, word in enumerate(sorted(search_words), 1):
+        print(f"       {idx:3d}. {word}")
     print("-" * 60)
 
     # 2. 지정된 디렉토리 하위 소스 파일 탐색 및 매칭
@@ -400,6 +456,17 @@ def main():
     print(f"  - 스캔한 총 라인 수 : {total_lines_scanned:,} 줄")
     print(f"  - 스킵된 주석 라인  : {total_lines_skipped:,} 줄")
     print(f"  - 매칭 발견 건수    : {len(match_buffer):,} 건")
+    print("-" * 60)
+
+    # [추가: DB 등록 전 결과를 CSV로 저장]
+    if match_buffer:
+        print("[INFO] 임시 결과를 CSV 파일로 저장 중...")
+        try:
+            csv_output_path = save_results_to_csv(match_buffer, table_name, SCRIPT_DIR)
+            print(f"  - CSV 파일 저장 완료: {csv_output_path}")
+            print(f"  - 저장된 레코드 수  : {len(match_buffer):,} 건")
+        except Exception as e:
+            print(f"  - [WARN] CSV 저장 실패: {e}")
     print("-" * 60)
 
     # 3. DB 적재 진행
