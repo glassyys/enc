@@ -808,17 +808,20 @@ def offset_to_lineno(raw_text: str, char_offset: int) -> int:
 # ============================================================
 def extract_queries_from_file(file_path: str) -> tuple:
     """
-    반환: (queries_with_offset, total_lines)
+    반환: (queries_with_offset, total_lines, orig_lines)
     queries_with_offset : list of (query_str, raw_query_str, start_line_no)
         start_line_no : 파일 전체 기준 쿼리 시작 1-based 라인번호
     total_lines         : 파일 전체 라인 수
+    orig_lines          : 파일 원본 전체 라인 리스트
     """
     queries_with_offset = []
     total_lines         = 0
+    orig_lines          = []
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             raw = f.read()
-        total_lines = raw.count("\n") + 1
+        orig_lines  = raw.splitlines()
+        total_lines = len(orig_lines)
         content     = preprocess(raw)
         ei_queries  = extract_execute_immediate(content)
 
@@ -831,6 +834,7 @@ def extract_queries_from_file(file_path: str) -> tuple:
 
         pos    = 0
         length = len(masked)
+        last_orig_idx = 0
         while pos < length:
             match = MAIN_QUERY_START.search(masked, pos)
             if not match:
@@ -886,10 +890,15 @@ def extract_queries_from_file(file_path: str) -> tuple:
                     pos = end
                     continue
 
-                # [수정3] 파일 전체 기준 쿼리 시작 라인번호 계산
-                # preprocess 는 주석을 공백으로 치환하지만 개행은 유지하므로
-                # masked 내 start offset 의 개행 수 = 원본 파일의 라인번호 - 1
-                start_line_no = masked.count("\n", 0, start) + 1
+                # [수정3] 파일 전체 기준 쿼리 시작 라인번호 계산 (원본 파일 기준)
+                start_line_no = 1
+                first_query_line = query.splitlines()[0].strip()
+                if first_query_line:
+                    for idx in range(last_orig_idx, len(orig_lines)):
+                        if first_query_line in orig_lines[idx]:
+                            start_line_no = idx + 1
+                            last_orig_idx = idx
+                            break
 
                 queries_with_offset.append((query, query, start_line_no))
             pos = end
@@ -900,7 +909,7 @@ def extract_queries_from_file(file_path: str) -> tuple:
 
     except Exception:
         pass
-    return queries_with_offset, total_lines
+    return queries_with_offset, total_lines, orig_lines
 
 
 # ============================================================
@@ -1576,6 +1585,7 @@ def build_col_match_rows(
     search_pairs: list,
     compiled_col_patterns: dict,
     query_start_line_no,        # [수정3] 파일 전체 기준 쿼리 시작 1-based 라인번호 (None 가능)
+    orig_lines: list = None     # [추가] 원본 소스 파일 라인 리스트
 ) -> list:
     """
     search_pairs         : [{"tbl_name": str, "column_name": str,
@@ -1631,17 +1641,22 @@ def build_col_match_rows(
         seen.add(dedup_key)
 
         # [수정3] 칼럼이 포함된 라인 및 파일 전체 기준 절대 라인번호 산출
-        # query_lines 는 쿼리 내 상대 라인(0-based index)
-        # 절대 라인번호 = 쿼리 시작 라인번호(1-based) + 쿼리 내 상대 라인 index(0-based)
         matched_line    = ""
         matched_line_no = None
-        for rel_idx, line in enumerate(query_lines):
-            if rx.search(line):
-                matched_line = line.strip()
-                if query_start_line_no is not None:
-                    # rel_idx == 0 이면 쿼리 시작 라인과 동일한 라인
-                    matched_line_no = query_start_line_no + rel_idx
-                break
+        
+        if query_start_line_no is not None and orig_lines:
+            start_idx = query_start_line_no - 1
+            for idx in range(start_idx, len(orig_lines)):
+                if rx.search(orig_lines[idx]):
+                    matched_line_no = idx + 1
+                    matched_line = orig_lines[idx].strip()
+                    break
+        else:
+            # fallback (EXECUTE IMMEDIATE 등 원본 매칭이 어려울 때)
+            for line in query_lines:
+                if rx.search(line):
+                    matched_line = line.strip()
+                    break
 
         results.append({
             "base_directory":  base_directory,
@@ -1745,7 +1760,7 @@ def main():
             base_directory = os.path.abspath(root)
 
             # [수정3] 반환값 변경: (query, raw_query, start_line_no)
-            queries_with_offset, file_lines = extract_queries_from_file(full_path)
+            queries_with_offset, file_lines, orig_lines = extract_queries_from_file(full_path)
             total_file_lines += file_lines
             total_queries    += len(queries_with_offset)
 
@@ -1791,6 +1806,7 @@ def main():
                     search_pairs        = search_pairs,
                     compiled_col_patterns = compiled_col_patterns,
                     query_start_line_no = query_start_line_no,   # [수정3]
+                    orig_lines          = orig_lines,            # [추가]
                 )
                 col_match_buffer.extend(cm_rows)
 
