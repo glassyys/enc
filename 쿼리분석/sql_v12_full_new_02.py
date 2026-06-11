@@ -1,23 +1,65 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================
-# sql_v12_full_new.py
+# sql_v12_full_new_02.py
 #
 # 실행예시:
-#   python3 sql_v12_full_new.py <검색대상_디렉토리> <경로포함_CSV파일명>
-#          [--mode SIMPLE|DETAIL] [--db] [--conf mysql.conf 경로]
+#   # SIMPLE 모드 (DB 미등록)
+#   python3 /home/p190872/chksrc/sql_v12_full_new_02.py \
+#       /NAS/MIDP/DBMSVC/MIDP/SID \
+#       /home/p190872/chksrc/key_columns.csv \
+#       --mode SIMPLE
+#
+#   # SIMPLE 모드 + DB 등록 (mysql.conf 는 스크립트 디렉토리에서 자동탐색)
+#   python3 /home/p190872/chksrc/sql_v12_full_new_02.py \
+#       /NAS/MIDP/DBMSVC/MIDP/SID \
+#       /home/p190872/chksrc/key_columns.csv \
+#       --mode SIMPLE --db
+#
+#   # DETAIL 모드 + DB 등록 + mysql.conf 경로 직접 지정
+#   python3 /home/p190872/chksrc/sql_v12_full_new_02.py \
+#       /NAS/MIDP/DBMSVC/MIDP/TMT \
+#       /home/p190872/chksrc/key_columns.csv \
+#       --mode DETAIL --db \
+#       --conf /home/p190872/chksrc/mysql.conf
+#
+#   # 기존 sql_v12_full_emrput.py 호출 방식과 대응 비교
+#   # (기존) python3 /home/p190872/chksrc/sql_v12_full_emrput.py \
+#   #            /NAS/MIDP/DBMSVC/MIDP/SID --mode SIMPLE --db
+#   # (신규) python3 /home/p190872/chksrc/sql_v12_full_new_02.py \
+#   #            /NAS/MIDP/DBMSVC/MIDP/SID \
+#   #            /home/p190872/chksrc/key_columns.csv \
+#   #            --mode SIMPLE --db
 #
 # 파라미터:
 #   검색대상_디렉토리  : 소스파일(.sql/.hql/.uld/.ld/.sh) 탐색 루트
-#   경로포함_CSV파일명 : 검색 기준 CSV (헤더: table_name,column_name 고정)
+#   경로포함_CSV파일명 : 검색 기준 CSV
+#                        헤더(고정 4항목): tbl_name, column_name,
+#                                          tobe_enc_key, tobe_enc_rsn
+#                        검색은 tbl_name + column_name 기준으로 수행
+#                        tobe_enc_key, tobe_enc_rsn 은 결과에 추가 등록됨
 #   --mode SIMPLE(기본): CTE 투명 처리, 물리소스->타겟만 출력
 #   --mode DETAIL       : WITH절 CTE 흐름 포함 출력
 #   --db                : CSV 생성 + MySQL DB 등록 (mysql.conf 필요)
 #   --conf 경로         : mysql.conf 파일 경로 지정
 #
+# [mysql.conf 파일 예시]
+#   [mysql]
+#   host     = localhost
+#   port     = 3306
+#   user     = root
+#   password = secret
+#   database = midp_db
+#   charset  = utf8mb4
+#
+# [입력 CSV 예시] key_columns.csv
+#   tbl_name,column_name,tobe_enc_key,tobe_enc_rsn
+#   orders,cust_id,KEY001,고객식별번호
+#   customers,cust_name,KEY002,고객명
+#
 # 변경이력:
 # ---------------------------------------------------------------
-# v12_new (신규 통합본)
+# v12_new (신규 통합본, sql_v12_full_new.py)
 #   [참조1] sql_v12_full_emrput.py
 #     - 전체 로직 흐름, 출력 스타일, 테이블 등록 방식(DROP→CREATE→INSERT) 유지
 #     - 리니지 테이블, 쿼리텍스트 테이블 등록 로직 유지
@@ -29,21 +71,45 @@
 #     - 기존: <분석대상_디렉토리> [--mode] [--db] [--conf]
 #     - 변경: <검색대상_디렉토리> <경로포함_CSV파일명> [--mode] [--db] [--conf]
 #   [신규2] CSV 입력 처리
-#     - 헤더: table_name, column_name (고정)
+#     - 헤더: table_name, column_name (고정 2항목)
 #     - 헤더 제외 데이터 행에서 (table_name, column_name) 쌍 추출
 #     - 추출 결과를 실행디렉토리 하위 in/ 디렉토리에 검색용 파일로 저장
 #   [신규3] 테이블+칼럼 매칭 로직
-#     - 쿼리 추출 후 각 쿼리에 대해:
-#       · source_table 또는 target_table 중 하나라도 CSV의 table_name 과 일치(대소문자 무시)
-#       · 동시에 해당 쿼리 텍스트에 column_name 이 포함(\b단어\b 완전일치)
-#     - 조건 충족 시: sql_type, crud_type, target_table, matched_table,
-#                     matched_column, matched_line 추출하여 col_match_buffer 에 적재
+#     - source_table 또는 target_table 중 하나라도 CSV의 table_name 과 일치
+#     - 동시에 해당 쿼리 텍스트에 column_name 이 포함(\b단어\b 완전일치)
+#     - matched_line(쿼리 내 첫 번째 매칭 라인) 추출하여 col_match_buffer 에 적재
 #   [신규4] 칼럼매칭 결과 CSV 생성
 #     - 파일명: {PROGRAM_NAME}_{last_dir}_col_match_{timestamp}.csv
-#     - 저장위치: out/ 디렉토리
 #   [신규5] 칼럼매칭 DB 테이블 신규 등록 (DROP→CREATE→INSERT)
 #     - 테이블명: {PROGRAM_NAME}_{last_dir}_{mode}_col_match
-#     - 기존 리니지/쿼리 테이블 등록 위에 추가로 처리
+# ---------------------------------------------------------------
+# v12_new_02 (2차 수정, sql_v12_full_new_02.py)
+#   [수정1] 실행예시 주석 보완
+#     - 실제 서버 경로(/home/p190872/chksrc/, /NAS/MIDP/...) 기준 구체적 예시 추가
+#     - 기존 sql_v12_full_emrput.py 호출과 1:1 대응 비교 예시 추가
+#   [수정2] CSV 헤더 4항목으로 확장
+#     - 기존: table_name, column_name (2항목)
+#     - 변경: tbl_name, column_name, tobe_enc_key, tobe_enc_rsn (4항목)
+#     - 검색 키는 tbl_name + column_name 으로 동일하게 유지
+#     - tobe_enc_key, tobe_enc_rsn 은 결과 CSV 및 DB 테이블에 함께 등록
+#     - in/ 저장 검색용 파일도 4항목 헤더로 저장
+#   [수정3] 매칭 라인번호를 쿼리 기준이 아닌 소스파일 전체 기준으로 변경
+#     - 기존: 쿼리 텍스트 내 상대 라인번호 (1부터 시작하는 쿼리 내 위치)
+#     - 변경: 소스파일(.sql 등) 전체 기준 절대 라인번호
+#     - 구현: extract_queries_from_file() 에서 각 쿼리의 파일 내
+#             시작 오프셋(char_offset)을 함께 반환
+#             → build_col_match_rows() 에서 char_offset 을 라인번호로 환산 후
+#               칼럼이 포함된 라인의 파일 전체 기준 절대 라인번호를 산출
+#     - 컬럼명: matched_line_no (파일 전체 기준 라인번호)
+#   [수정4] 칼럼매칭 DB 테이블에 신규 항목 4개 추가
+#     - tbl_name     : CSV 의 tbl_name 값 (기존 matched_table 과 동일 값)
+#     - column_name  : CSV 의 column_name 값 (기존 matched_column 과 동일 값)
+#     - tobe_enc_key : CSV 의 tobe_enc_key 값
+#     - tobe_enc_rsn : CSV 의 tobe_enc_rsn 값
+#     - matched_line_no : 파일 전체 기준 절대 라인번호
+#     - _DDL_CREATE_COL_MATCH, _SQL_INSERT_COL_MATCH,
+#       db_insert_col_match_all(), COL_MATCH_FIELDNAMES,
+#       save_col_match_csv(), build_col_match_rows() 모두 반영
 # ===============================================================
 
 import os
@@ -129,8 +195,8 @@ RESERVED_WORDS = {
 # ============================================================
 # 정규식
 # ============================================================
-SINGLE_LINE_COMMENT   = re.compile(r"--.*?$",            re.MULTILINE)
-MULTI_LINE_COMMENT    = re.compile(r"/\*.*?\*/",          re.DOTALL)
+SINGLE_LINE_COMMENT    = re.compile(r"--.*?$",           re.MULTILINE)
+MULTI_LINE_COMMENT     = re.compile(r"/\*.*?\*/",         re.DOTALL)
 ONLY_FROM_DUAL_PATTERN = re.compile(
     r"^\s*SELECT\s+.*?\s+FROM\s+DUAL\s*;?\s*$",
     re.IGNORECASE | re.DOTALL
@@ -214,7 +280,7 @@ def parse_args():
             i += 1
 
     if src_dir is None or csv_path is None:
-        print("사용법: python3 %s.py <검색대상_디렉토리> <경로포함_CSV파일명> "
+        print("사용법: python3 %s <검색대상_디렉토리> <경로포함_CSV파일명> "
               "[--mode SIMPLE|DETAIL] [--db] [--conf 경로]" % PROGRAM_NAME)
         sys.exit(1)
 
@@ -235,15 +301,20 @@ SOURCE_DIR, INPUT_CSV_PATH, MODE, USE_DB, CONF_PATH = parse_args()
 
 
 # ============================================================
-# [신규2] CSV 입력 로드 (헤더: table_name, column_name 고정)
-# 반환: list of dict {table_name: str, column_name: str}
-# 부작용: in/ 디렉토리에 검색용 복사본 저장
+# [신규2][수정2] CSV 입력 로드
+# 헤더(4항목 고정): tbl_name, column_name, tobe_enc_key, tobe_enc_rsn
+# 검색 기준      : tbl_name + column_name
+# 추가 등록 항목 : tobe_enc_key, tobe_enc_rsn (결과 CSV/DB에 함께 적재)
 # ============================================================
 def load_search_csv(csv_path: str) -> list:
     """
-    헤더 행: table_name, column_name (대소문자 무시)
-    이후 데이터 행에서 (table_name, column_name) 쌍을 추출한다.
-    중복 쌍은 제거하여 반환한다.
+    헤더 행(4항목 고정): tbl_name, column_name, tobe_enc_key, tobe_enc_rsn
+    - 헤더명은 대소문자·앞뒤 공백 무시하여 인식
+    - tbl_name + column_name 조합이 중복인 경우 제거
+    - tobe_enc_key, tobe_enc_rsn 은 없으면 빈 문자열로 처리
+    반환: list of dict {
+              tbl_name, column_name, tobe_enc_key, tobe_enc_rsn
+          }
     """
     pairs = []
     seen  = set()
@@ -252,20 +323,30 @@ def load_search_csv(csv_path: str) -> list:
             reader = csv.DictReader(f)
             # 헤더 정규화 (공백·대소문자 무시)
             norm_fields = {k.strip().lower(): k for k in (reader.fieldnames or [])}
-            tbl_key = norm_fields.get("table_name")
+            tbl_key = norm_fields.get("tbl_name")
             col_key = norm_fields.get("column_name")
+            enc_key = norm_fields.get("tobe_enc_key")   # [수정2]
+            rsn_key = norm_fields.get("tobe_enc_rsn")   # [수정2]
             if not tbl_key or not col_key:
-                print("[ERROR] CSV 헤더에 'table_name' 또는 'column_name' 이 없습니다.")
-                print("        실제 헤더: %s" % reader.fieldnames)
+                print("[ERROR] CSV 헤더에 'tbl_name' 또는 'column_name' 이 없습니다.")
+                print("        실제 헤더  : %s" % reader.fieldnames)
+                print("        필수 헤더  : tbl_name, column_name, tobe_enc_key, tobe_enc_rsn")
                 sys.exit(1)
             for row in reader:
-                tbl = (row.get(tbl_key) or "").strip()
-                col = (row.get(col_key) or "").strip()
+                tbl     = (row.get(tbl_key) or "").strip()
+                col     = (row.get(col_key) or "").strip()
+                enc_k   = (row.get(enc_key) or "").strip() if enc_key else ""
+                enc_rsn = (row.get(rsn_key) or "").strip() if rsn_key else ""
                 if tbl and col:
                     key = (tbl.upper(), col.upper())
                     if key not in seen:
                         seen.add(key)
-                        pairs.append({"table_name": tbl, "column_name": col})
+                        pairs.append({
+                            "tbl_name":     tbl,
+                            "column_name":  col,
+                            "tobe_enc_key": enc_k,
+                            "tobe_enc_rsn": enc_rsn,
+                        })
     except Exception as e:
         print("[ERROR] CSV 파일 읽기 실패: %s / %s" % (csv_path, str(e)))
         sys.exit(1)
@@ -274,16 +355,21 @@ def load_search_csv(csv_path: str) -> list:
 
 def save_search_csv_to_in(pairs: list, source_dir: str, op_dtm: str) -> str:
     """
-    [신규2] 추출된 (table_name, column_name) 쌍을 in/ 디렉토리에 저장한다.
+    [신규2][수정2] 추출된 4항목 쌍을 in/ 디렉토리에 저장한다.
     파일명: {PROGRAM_NAME}_{last_dir}_search_input_{timestamp}.csv
     """
     os.makedirs(IN_DIR, exist_ok=True)
     last_dir  = os.path.basename(os.path.normpath(source_dir))
     timestamp = op_dtm.replace("-", "").replace(" ", "_").replace(":", "")
-    out_path  = os.path.join(IN_DIR,
-                             "%s_%s_search_input_%s.csv" % (PROGRAM_NAME, last_dir, timestamp))
+    out_path  = os.path.join(
+        IN_DIR,
+        "%s_%s_search_input_%s.csv" % (PROGRAM_NAME, last_dir, timestamp)
+    )
     with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=["table_name", "column_name"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["tbl_name", "column_name", "tobe_enc_key", "tobe_enc_rsn"]
+        )
         writer.writeheader()
         writer.writerows(pairs)
     return out_path
@@ -433,40 +519,55 @@ VALUES
 """
 
 # ============================================================
-# [신규5] DDL / INSERT SQL  (신규: 칼럼 매칭 결과 테이블)
+# [신규5][수정4] DDL / INSERT SQL  (신규: 칼럼 매칭 결과 테이블)
+# v12_new_02:
+#   - tbl_name, column_name 컬럼 명시적으로 추가
+#     (matched_table/matched_column 과 값은 동일하나 CSV 원본 컬럼명으로 별도 저장)
+#   - tobe_enc_key, tobe_enc_rsn 추가
+#   - matched_line_no : 파일 전체 기준 절대 라인번호 추가
 # ============================================================
 _DDL_CREATE_COL_MATCH = """
 CREATE TABLE IF NOT EXISTS `{table}` (
-  `id`             BIGINT        NOT NULL AUTO_INCREMENT,
-  `run_id`         VARCHAR(30)   NOT NULL  COMMENT '실행 타임스탬프(YYYYMMDD_HHMMSS)',
-  `base_directory` VARCHAR(500)  NOT NULL  COMMENT '소스파일 디렉토리 경로',
-  `file_name`      VARCHAR(500)  NOT NULL  COMMENT '파일명',
-  `dir_file`       TEXT          NOT NULL  COMMENT '소스파일 전체경로',
-  `crud_type`      VARCHAR(1)    NULL      COMMENT 'C/R/U/D',
-  `sql_type`       VARCHAR(30)   NULL      COMMENT 'INSERT/SELECT/UPDATE/...',
-  `target_table`   VARCHAR(500)  NULL      COMMENT '쿼리의 타겟 테이블',
-  `matched_table`  VARCHAR(500)  NOT NULL  COMMENT 'CSV 기준 매칭된 테이블명',
-  `matched_column` VARCHAR(500)  NOT NULL  COMMENT 'CSV 기준 매칭된 칼럼명',
-  `match_type`     VARCHAR(10)   NULL      COMMENT 'SOURCE/TARGET (매칭된 위치)',
-  `matched_line`   TEXT          NULL      COMMENT '칼럼이 발견된 쿼리 라인',
-  `op_dtm`         DATETIME      NOT NULL  COMMENT '처리일시',
+  `id`              BIGINT        NOT NULL AUTO_INCREMENT,
+  `run_id`          VARCHAR(30)   NOT NULL  COMMENT '실행 타임스탬프(YYYYMMDD_HHMMSS)',
+  `base_directory`  VARCHAR(500)  NOT NULL  COMMENT '소스파일 디렉토리 경로',
+  `file_name`       VARCHAR(500)  NOT NULL  COMMENT '파일명',
+  `dir_file`        TEXT          NOT NULL  COMMENT '소스파일 전체경로',
+  `crud_type`       VARCHAR(1)    NULL      COMMENT 'C/R/U/D',
+  `sql_type`        VARCHAR(30)   NULL      COMMENT 'INSERT/SELECT/UPDATE/...',
+  `target_table`    VARCHAR(500)  NULL      COMMENT '쿼리의 타겟 테이블',
+  `matched_table`   VARCHAR(500)  NOT NULL  COMMENT '매칭된 테이블명 (원본명)',
+  `matched_column`  VARCHAR(500)  NOT NULL  COMMENT '매칭된 칼럼명',
+  `tbl_name`        VARCHAR(500)  NOT NULL  COMMENT 'CSV의 tbl_name 값',
+  `column_name`     VARCHAR(500)  NOT NULL  COMMENT 'CSV의 column_name 값',
+  `tobe_enc_key`    VARCHAR(200)  NULL      COMMENT 'CSV의 tobe_enc_key 값',
+  `tobe_enc_rsn`    VARCHAR(500)  NULL      COMMENT 'CSV의 tobe_enc_rsn 값',
+  `match_type`      VARCHAR(10)   NULL      COMMENT 'SOURCE/TARGET (매칭된 위치)',
+  `matched_line_no` INT           NULL      COMMENT '소스파일 전체 기준 절대 라인번호',
+  `matched_line`    TEXT          NULL      COMMENT '칼럼이 발견된 라인 내용',
+  `op_dtm`          DATETIME      NOT NULL  COMMENT '처리일시',
   PRIMARY KEY (`id`),
   KEY `idx_run_id`        (`run_id`),
   KEY `idx_file`          (`file_name`(191)),
   KEY `idx_matched_table` (`matched_table`(191)),
-  KEY `idx_matched_col`   (`matched_column`(191))
+  KEY `idx_matched_col`   (`matched_column`(191)),
+  KEY `idx_tbl_name`      (`tbl_name`(191)),
+  KEY `idx_enc_key`       (`tobe_enc_key`(191))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  COMMENT='CSV 테이블+칼럼 매칭 결과';
+  COMMENT='CSV 테이블+칼럼 매칭 결과 (tobe_enc_key/rsn, 파일절대라인번호 포함)';
 """
 
 _SQL_INSERT_COL_MATCH = """
 INSERT INTO `{table}`
   (run_id, base_directory, file_name, dir_file,
    crud_type, sql_type, target_table,
-   matched_table, matched_column, match_type, matched_line,
+   matched_table, matched_column,
+   tbl_name, column_name,
+   tobe_enc_key, tobe_enc_rsn,
+   match_type, matched_line_no, matched_line,
    op_dtm)
 VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 
@@ -582,7 +683,9 @@ def db_insert_query_text_all(query_text_buffer: list, op_dtm: str,
 
 
 # ============================================================
-# [신규5] DB: DROP → CREATE → INSERT  (신규: 칼럼 매칭 결과 테이블)
+# [신규5][수정4] DB: DROP → CREATE → INSERT  (신규: 칼럼 매칭 결과 테이블)
+# v12_new_02: tbl_name, column_name, tobe_enc_key, tobe_enc_rsn,
+#             matched_line_no 바인딩 추가
 # ============================================================
 def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
                              mysql_conf: dict, source_dir: str, mode: str) -> tuple:
@@ -601,11 +704,15 @@ def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
         for r in col_match_buffer:
             batch.append((
                 run_id,
-                r["base_directory"],  r["file_name"],     r["dir_file"],
+                r["base_directory"],  r["file_name"],    r["dir_file"],
                 r["crud_type"],       r["sql_type"],
                 r["target_table"],
                 r["matched_table"],   r["matched_column"],
-                r["match_type"],      r["matched_line"],
+                r["tbl_name"],        r["column_name"],   # [수정4] CSV 원본 컬럼명
+                r["tobe_enc_key"],    r["tobe_enc_rsn"],  # [수정4] CSV 부가 항목
+                r["match_type"],
+                r["matched_line_no"],                     # [수정3] 파일 전체 기준 절대 라인번호
+                r["matched_line"],
                 op_dtm,
             ))
         if batch:
@@ -677,15 +784,44 @@ def extract_execute_immediate(content: str) -> list:
 
 
 # ============================================================
-# depth 기반 쿼리 추출
+# [수정3] 파일 내 char offset → 라인번호 변환 유틸
+#
+# raw_text   : 파일 원본 전체 문자열
+# char_offset: 쿼리 시작 위치 (raw_text 기준 문자 offset)
+# 반환값     : 1-based 라인번호
+# ============================================================
+def offset_to_lineno(raw_text: str, char_offset: int) -> int:
+    """raw_text 에서 char_offset 이전까지의 개행 수 + 1 을 반환한다."""
+    return raw_text.count("\n", 0, char_offset) + 1
+
+
+# ============================================================
+# [수정3] depth 기반 쿼리 추출 (char_offset 함께 반환)
+#
+# 변경사항:
+#   - 반환값 변경:
+#       기존: list of (preprocessed_query, raw_query)
+#       변경: list of (preprocessed_query, raw_query, query_start_offset)
+#             query_start_offset : masked 텍스트 내 쿼리 시작 char offset
+#             (preprocess 후 텍스트이므로 라인번호 계산 시 raw 텍스트와
+#              라인 수가 같다고 가정 - 주석 제거 시 줄바꿈은 유지됨)
 # ============================================================
 def extract_queries_from_file(file_path: str) -> tuple:
-    queries_with_raw = []
-    total_lines      = 0
+    """
+    반환: (queries_with_offset, total_lines, orig_lines)
+    queries_with_offset : list of (query_str, raw_query_str, start_line_no)
+        start_line_no : 파일 전체 기준 쿼리 시작 1-based 라인번호
+    total_lines         : 파일 전체 라인 수
+    orig_lines          : 파일 원본 전체 라인 리스트
+    """
+    queries_with_offset = []
+    total_lines         = 0
+    orig_lines          = []
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             raw = f.read()
-        total_lines = raw.count("\n") + 1
+        orig_lines  = raw.splitlines()
+        total_lines = len(orig_lines)
         content     = preprocess(raw)
         ei_queries  = extract_execute_immediate(content)
 
@@ -698,6 +834,7 @@ def extract_queries_from_file(file_path: str) -> tuple:
 
         pos    = 0
         length = len(masked)
+        last_orig_idx = 0
         while pos < length:
             match = MAIN_QUERY_START.search(masked, pos)
             if not match:
@@ -752,15 +889,27 @@ def extract_queries_from_file(file_path: str) -> tuple:
                    not re.match(r"ALTER\s+(TABLE|VIEW)\b", query, re.IGNORECASE):
                     pos = end
                     continue
-                queries_with_raw.append((query, query))
+
+                # [수정3] 파일 전체 기준 쿼리 시작 라인번호 계산 (원본 파일 기준)
+                start_line_no = 1
+                first_query_line = query.splitlines()[0].strip()
+                if first_query_line:
+                    for idx in range(last_orig_idx, len(orig_lines)):
+                        if first_query_line in orig_lines[idx]:
+                            start_line_no = idx + 1
+                            last_orig_idx = idx
+                            break
+
+                queries_with_offset.append((query, query, start_line_no))
             pos = end
 
+        # EXECUTE IMMEDIATE 쿼리는 파일 라인번호 특정 불가 → None 으로 처리
         for ei_q in ei_queries:
-            queries_with_raw.append((ei_q, ei_q))
+            queries_with_offset.append((ei_q, ei_q, None))
 
     except Exception:
         pass
-    return queries_with_raw, total_lines
+    return queries_with_offset, total_lines, orig_lines
 
 
 # ============================================================
@@ -1374,14 +1523,19 @@ def save_csv(rows_buffer: list, source_dir: str, op_dtm: str) -> str:
 
 
 # ============================================================
-# [신규4] CSV 저장 (칼럼 매칭 결과)
+# [신규4][수정4] CSV 저장 (칼럼 매칭 결과)
+# v12_new_02: tbl_name, column_name, tobe_enc_key, tobe_enc_rsn,
+#             matched_line_no 컬럼 추가
 # ============================================================
 COL_MATCH_FIELDNAMES = [
     "base_directory", "file_name", "dir_file",
     "crud_type", "sql_type",
     "target_table",
-    "matched_table", "matched_column",
+    "matched_table",  "matched_column",
+    "tbl_name",       "column_name",     # [수정4] CSV 원본 컬럼명
+    "tobe_enc_key",   "tobe_enc_rsn",    # [수정4] CSV 부가 항목
     "match_type",
+    "matched_line_no",                    # [수정3] 파일 전체 기준 절대 라인번호
     "matched_line",
     "op_dtm",
 ]
@@ -1405,14 +1559,19 @@ def save_col_match_csv(col_match_buffer: list, source_dir: str, op_dtm: str) -> 
 
 
 # ============================================================
-# [신규3] 테이블+칼럼 매칭 로직
+# [신규3][수정2][수정3][수정4] 테이블+칼럼 매칭 로직
 #
 # 각 쿼리에 대해:
 #   1) 쿼리의 source_tables / target_tables 를 이미 추출된 값으로 받는다
-#   2) CSV 의 (table_name, column_name) 쌍 순회
-#   3) source OR target 중 하나라도 table_name 과 대소문자 무시 일치
+#   2) CSV 의 (tbl_name, column_name, tobe_enc_key, tobe_enc_rsn) 쌍 순회
+#   3) source OR target 중 하나라도 tbl_name 과 대소문자 무시 일치
 #   4) 동시에 쿼리 텍스트에 column_name 이 \b단어\b 완전일치로 포함
-#   5) 조건 충족 시 col_match_buffer 에 적재
+#   5) 조건 충족 시:
+#      - tobe_enc_key, tobe_enc_rsn 을 결과에 포함
+#      - 소스파일 전체 기준 절대 라인번호(matched_line_no) 산출
+#        = 쿼리 시작 라인번호(query_start_line_no) +
+#          쿼리 내에서 칼럼이 나타난 상대 라인번호(0-based) 의 합
+#      - col_match_buffer 에 적재
 # ============================================================
 def build_col_match_rows(
     query_text: str,
@@ -1425,24 +1584,33 @@ def build_col_match_rows(
     dir_file: str,
     search_pairs: list,
     compiled_col_patterns: dict,
+    query_start_line_no,        # [수정3] 파일 전체 기준 쿼리 시작 1-based 라인번호 (None 가능)
+    orig_lines: list = None     # [추가] 원본 소스 파일 라인 리스트
 ) -> list:
     """
-    search_pairs         : [{"table_name": str, "column_name": str}, ...]
+    search_pairs         : [{"tbl_name": str, "column_name": str,
+                              "tobe_enc_key": str, "tobe_enc_rsn": str}, ...]
     compiled_col_patterns: {column_name_upper: compiled_regex, ...}
+    query_start_line_no  : 파일 전체 기준 쿼리 시작 라인번호(1-based). None 이면 절대번호 산출 불가.
     """
     results = []
-    seen    = set()   # (matched_table, matched_column, match_type) 중복 제거
+    seen    = set()   # (matched_table_upper, matched_column_upper, match_type) 중복 제거
 
     # source/target 테이블 upper set
     src_upper = {s.upper() for s in sources if s}
     tgt_upper = {t.upper() for t in targets if t}
     all_tgt   = ", ".join(sorted(targets)) if targets else ""
 
+    # 쿼리를 라인 단위로 미리 분리 (상대 라인번호 산출용)
+    query_lines = query_text.splitlines()
+
     for pair in search_pairs:
-        tbl = pair["table_name"]
-        col = pair["column_name"]
-        tbl_up = tbl.upper()
-        col_up = col.upper()
+        tbl     = pair["tbl_name"]          # [수정2] table_name → tbl_name
+        col     = pair["column_name"]
+        enc_k   = pair.get("tobe_enc_key", "")   # [수정2]
+        enc_rsn = pair.get("tobe_enc_rsn", "")   # [수정2]
+        tbl_up  = tbl.upper()
+        col_up  = col.upper()
 
         # 테이블 일치 확인 (source 또는 target)
         match_type = None
@@ -1472,24 +1640,40 @@ def build_col_match_rows(
             continue
         seen.add(dedup_key)
 
-        # 칼럼이 포함된 첫 번째 라인 추출
-        matched_line = ""
-        for line in query_text.splitlines():
-            if rx.search(line):
-                matched_line = line.strip()
-                break
+        # [수정3] 칼럼이 포함된 라인 및 파일 전체 기준 절대 라인번호 산출
+        matched_line    = ""
+        matched_line_no = None
+        
+        if query_start_line_no is not None and orig_lines:
+            start_idx = query_start_line_no - 1
+            for idx in range(start_idx, len(orig_lines)):
+                if rx.search(orig_lines[idx]):
+                    matched_line_no = idx + 1
+                    matched_line = orig_lines[idx].strip()
+                    break
+        else:
+            # fallback (EXECUTE IMMEDIATE 등 원본 매칭이 어려울 때)
+            for line in query_lines:
+                if rx.search(line):
+                    matched_line = line.strip()
+                    break
 
         results.append({
-            "base_directory": base_directory,
-            "file_name":      file_name,
-            "dir_file":       dir_file,
-            "crud_type":      crud_type,
-            "sql_type":       sql_type,
-            "target_table":   all_tgt,
-            "matched_table":  tbl,
-            "matched_column": col,
-            "match_type":     match_type,
-            "matched_line":   matched_line,
+            "base_directory":  base_directory,
+            "file_name":       file_name,
+            "dir_file":        dir_file,
+            "crud_type":       crud_type,
+            "sql_type":        sql_type,
+            "target_table":    all_tgt,
+            "matched_table":   tbl,
+            "matched_column":  col,
+            "tbl_name":        tbl,         # [수정4] CSV 원본 컬럼명 그대로 저장
+            "column_name":     col,         # [수정4] CSV 원본 컬럼명 그대로 저장
+            "tobe_enc_key":    enc_k,       # [수정4]
+            "tobe_enc_rsn":    enc_rsn,     # [수정4]
+            "match_type":      match_type,
+            "matched_line_no": matched_line_no,  # [수정3] 파일 전체 기준 절대 라인번호
+            "matched_line":    matched_line,
         })
 
     return results
@@ -1507,9 +1691,10 @@ def main():
     print("[INFO] 검색 기준 CSV 로드: %s" % INPUT_CSV_PATH)
     search_pairs = load_search_csv(INPUT_CSV_PATH)
     if not search_pairs:
-        print("[ERROR] CSV 에서 유효한 (table_name, column_name) 쌍을 찾지 못했습니다.")
+        print("[ERROR] CSV 에서 유효한 (tbl_name, column_name) 쌍을 찾지 못했습니다.")
         sys.exit(1)
-    print("[INFO] 검색 쌍 개수: %d 건" % len(search_pairs))
+    print("[INFO] 검색 쌍 개수: %d 건  (헤더: tbl_name, column_name, tobe_enc_key, tobe_enc_rsn)"
+          % len(search_pairs))
 
     # in/ 디렉토리에 검색용 복사본 저장
     in_csv_path = save_search_csv_to_in(search_pairs, SOURCE_DIR, op_dtm)
@@ -1547,7 +1732,7 @@ def main():
         print("[INFO] 데이터베이스           : %s" % mysql_conf.get("database"))
         print("[INFO] 등록 테이블 (리니지)   : %s" % table_name)
         print("[INFO] 등록 테이블 (쿼리)     : %s" % query_text_table_name)
-        print("[INFO] 등록 테이블 (칼럼매칭) : %s" % col_match_table_name)   # [신규5]
+        print("[INFO] 등록 테이블 (칼럼매칭) : %s" % col_match_table_name)
         print("=" * 60)
 
     print("\n[INFO] 분석 시작         : %s" % os.path.abspath(SOURCE_DIR))
@@ -1574,11 +1759,12 @@ def main():
             full_path      = os.path.join(root, file)
             base_directory = os.path.abspath(root)
 
-            queries_with_raw, file_lines = extract_queries_from_file(full_path)
+            # [수정3] 반환값 변경: (query, raw_query, start_line_no)
+            queries_with_offset, file_lines, orig_lines = extract_queries_from_file(full_path)
             total_file_lines += file_lines
-            total_queries    += len(queries_with_raw)
+            total_queries    += len(queries_with_offset)
 
-            for query, raw_query in queries_with_raw:
+            for query, raw_query, query_start_line_no in queries_with_offset:
                 sql_type  = detect_real_sql_type(query)
                 crud_type = classify_crud_type(sql_type)
                 cte_map   = extract_cte_map(query)
@@ -1607,18 +1793,20 @@ def main():
                     rows_buffer.extend(rows)
                     total_rows += len(rows)
 
-                # [신규3] 칼럼 매칭 버퍼
+                # [신규3][수정3] 칼럼 매칭 버퍼 (query_start_line_no 전달)
                 cm_rows = build_col_match_rows(
-                    query_text   = raw_query,
-                    sources      = sources,
-                    targets      = targets,
-                    crud_type    = crud_type,
-                    sql_type     = sql_type,
-                    base_directory = base_directory,
-                    file_name    = file,
-                    dir_file     = full_path,
-                    search_pairs = search_pairs,
+                    query_text          = raw_query,
+                    sources             = sources,
+                    targets             = targets,
+                    crud_type           = crud_type,
+                    sql_type            = sql_type,
+                    base_directory      = base_directory,
+                    file_name           = file,
+                    dir_file            = full_path,
+                    search_pairs        = search_pairs,
                     compiled_col_patterns = compiled_col_patterns,
+                    query_start_line_no = query_start_line_no,   # [수정3]
+                    orig_lines          = orig_lines,            # [추가]
                 )
                 col_match_buffer.extend(cm_rows)
 
@@ -1629,7 +1817,7 @@ def main():
     print("  총 파일 라인 수   : %8d 줄" % total_file_lines)
     print("  분석 결과 행 수   : %8d 건" % total_rows)
     print("  쿼리 텍스트 건수  : %8d 건" % len(query_text_buffer))
-    print("  칼럼 매칭 건수    : %8d 건" % len(col_match_buffer))   # [신규3]
+    print("  칼럼 매칭 건수    : %8d 건" % len(col_match_buffer))
 
     if not rows_buffer and not query_text_buffer and not col_match_buffer:
         print("\n[WARN] 분석 결과가 없어 CSV/DB 저장을 건너뜁니다.")
@@ -1639,7 +1827,7 @@ def main():
     csv_path = ""
     if rows_buffer:
         csv_path = save_csv(rows_buffer, SOURCE_DIR, op_dtm)
-        print("  저장 CSV (리니지) : %s" % csv_path)
+        print("  저장 CSV (리니지)  : %s" % csv_path)
 
     # ── [신규4] 칼럼 매칭 CSV 저장 ───────────────────────────────────
     col_match_csv_path = ""
@@ -1654,7 +1842,7 @@ def main():
     db_err         = None
     db_qt_inserted = 0
     db_qt_err      = None
-    db_cm_inserted = 0   # [신규5]
+    db_cm_inserted = 0
     db_cm_err      = None
 
     if USE_DB and mysql_conf:
@@ -1668,7 +1856,6 @@ def main():
             db_qt_inserted, db_qt_err = db_insert_query_text_all(
                 query_text_buffer, op_dtm, mysql_conf, SOURCE_DIR, MODE
             )
-        # [신규5] 칼럼 매칭 테이블 적재
         if col_match_buffer:
             print("[INFO] MySQL 칼럼 매칭 테이블 적재 시작 ...")
             db_cm_inserted, db_cm_err = db_insert_col_match_all(
@@ -1711,7 +1898,6 @@ def main():
             print("  DB 쿼리텍스트 테이블: %s.%s" % (mysql_conf.get("database"), qt_tbl))
             print("  DB 쿼리텍스트 건수  : %d" % db_qt_inserted)
 
-        # [신규5] 칼럼 매칭 DB 결과 출력
         if db_cm_err:
             print("  DB 칼럼매칭 등록    : 실패")
             print("  DB 오류 내용        : %s" % db_cm_err)
@@ -1728,8 +1914,4 @@ def main():
 
 
 if __name__ == "__main__":
-<<<<<<< HEAD
     main()
-=======
-    main()
->>>>>>> 81faabe846a0c65e611d77795d1c2a6d19da063f
