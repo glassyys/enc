@@ -1,0 +1,68 @@
+아래기준으로 sql_v12_full_new_02_local.py 파일생성
+-신규파일생성개요
+로컬에서 서버의 mySQL테이블 조회후 
+조회결과의 특정 칼럼 2개(테이블과 칼럼값이)의 값이
+지정한 경로 하위소스의 쿼리에 매칭되는 테이블과 칼럼값이 있는지 체크후 있는경우
+파일을 해당경로 하위 out디렉토리에 생성하고
+서버의 mySQL테이블에 등록하는 내용의 소스 생성
+
+-참조소스리스트소스
+sql_find_v001_01.py : 파일의 칼럼 이용 매칭자료 추출
+sql_find_v001_01_local.py : 파일의 칼럼 이용  로컬디렉토리 하위소스 매칭자료 추출
+sql_v12_full_new_02.py : 서버에서 파일의 칼럼기준 소스 조사후 매칭자료 추출후 파일생성및 테이블 등록
+
+처리요청내용
+1. 소스실행구조 
+   python3 sql_find_v001_01_local.py <검색대상_디렉토리> <CSV파일_절대경로> <검색기준테이블> [--mode SIMPLE|DETAIL] [--db] [--conf mysql.conf 경로]
+2. 로컬에서 서버의 MySQL 연결(기본값으로 처리하면 해당서버값으로 변경처리 예정)
+3. 파라미터로 지정한 <검색기준테이블> 기준 데이터 조회후
+4. <검색대상_디렉토리> 하위 소스소스 포함 검색 내용중 아래조건에 해당하는 자료 추출
+   [조건]
+   1) 소스에서 추출한 쿼리(query_text)내용중 tbl_name 값과 매칭자료가 있고(주석이 있는 경우의 쿼리도 포함하여 검색)
+   2) 1)번조건 성립하고 column_name값도 해당쿼리(query_text)에  있는 경우 
+   3) 해당경로 하위 out 디렉토리에 파일생성(레이아웃은 5번내용참고)
+5. 파일생성레이아웃
+   지정테이블의  칼럼중 db_name, tbl_name, column_name, tobe_enc_key, tobe_end_rsn 항목을 포함 
+   id, base_directory, file_name, dir_file, crud_type, sql_type, db_name, tbl_name, column_name, line_number, matched_line, tobe_enc_key, tobe_end_rsn
+   이 정도 레이아웃 정도로 생성하고 필요시 추가 가능
+   *주의: line_number 쿼리 기준이 아닌 전체소스기준 행번호로 추출
+6. 생성한 파일을 테이블에 로드
+7. [--db] 옵션이 없으면 파일만 생성
+8. 주석에 소스내용과 실행예시 작성 및 변경이력도 작성 및 출력결과도 참조소스처럼 상세히 생성
+
+다음 조건을 변경하여 소스 수정 부탁
+
+1. 소스에 실행형식 이외에 실제실행 예시도 주석에 추가
+2. mySQL테이블 조회생성시 database 기준으로 하지 말고 파라미터 입력한 스키마포함 전체 테이블명으로 처리
+3. 결과적재테이블도 <검색기준테이블>의 스키마기준으로 생성
+4. 검색리스트 화면출력부분은 생략
+5. 실행시 파일명생성시 일자_시간은 파일명생성시 제외
+
+
+1. 파일미터테이블 입력시 database 기준으로 하지 말고 입력한 스키마포함파리미터로 추가
+실행시검색리스트 출력은 하지 말고
+
+
+#     D:\source \
+#     enc_target_columns \
+#     --mode SIMPLE --db
+
+--------------
+# 기본 SIMPLE 모드로 실행 (파일만 생성)
+python3 sql_find_v001_01_local.py D:\source D:\data\target_columns.csv enc_target_columns --mode SIMPLE
+
+# WITH절 CTE 흐름까지 정밀 추적하여 파일만 생성할 경우 (DETAIL 모드)
+python3 sql_find_v001_01_local.py D:\source D:\data\target_columns.csv enc_target_columns --mode DETAIL
+
+# 매칭 결과를 파일로 저장하고, 동시에 서버 MySQL에 자동으로 테이블을 만들어 적재
+python3 sql_find_v001_01_local.py D:\source D:\data\target_columns.csv enc_target_columns --mode SIMPLE --db
+
+
+-- 1. 전체 원본 건수 (예: 1000건)
+SELECT COUNT(*) FROM midp_db.enc_target_columns;
+
+-- 2. 실제 스크립트가 인식하는 유효 건수 (예: 900건 예상)
+SELECT COUNT(DISTINCT UPPER(TRIM(tbl_name)), UPPER(TRIM(column_name))) 
+FROM midp_db.enc_target_columns
+WHERE tbl_name IS NOT NULL AND tbl_name != ''
+  AND column_name IS NOT NULL AND column_name != '';
