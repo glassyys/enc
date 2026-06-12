@@ -1,0 +1,86 @@
+■아래 오류시 조치
+code -g d:\workspace\enc\쿼리분석\sql_v12_full_new_02.py:100
+
+PS D:\workspace\enc> code -g d:\workspace\enc\쿼리분석\sql_v12_full_new_02.py:100
+
+'code.cmd' 프로그램을 실행하지 못했습니다. 지정된 파일을 찾을 수 없습니다위치 줄:1 문자:1
+
++ code -g d:\workspace\enc\쿼리분석\sql_v12_full_new_02.py:100
+
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.
+
+위치 줄:1 문자:1
+
++ code -g d:\workspace\enc\쿼리분석\sql_v12_full_new_02.py:100
+
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    + CategoryInfo          : ResourceUnavailable: (:) [], ApplicationFailedException
+
+    + FullyQualifiedErrorId : NativeCommandFailed
+
+ 
+
+PS D:\workspace\enc> cmd /c code -g "d:\workspace\enc\쿼리분석\sql_v12_full_new_02.py:100"
+
+PS D:\workspace\enc> 
+
+
+
+이런경우 조치방법
+
+PowerShell에서 code 명령어를 입력했을 때 "지정된 파일을 찾을 수 없습니다"라는 에러가 발생하는 이유는, VS Code(Visual Studio Code)의 실행 경로가 윈도우 환경 변수(Path)에 등록되어 있지 않거나 누락되었기 때문입니다.
+
+재미있는 점은 cmd /c code ...로 실행했을 때는 정상 작동했다는 것인데요, 이는 명령 프롬프트(CMD)와 PowerShell이 참조하는 환경 변수 상태가 일시적으로 다르거나, CMD 전용 별칭만 등록되어 있을 때 발생하는 전형적인 증상입니다.
+
+이 문제를 완전히 해결하고 앞으로 code만 입력해도 잘 작동하게 만드는 3가지 조치 방법을 안내해 드릴게요. 가장 편한 방법을 선택해 보세요!
+
+해결 방법 1: VS Code 내장 기능으로 PATH 재등록 (가장 추천)
+VS Code 자체 기능을 이용해 환경 변수를 자동으로 다시 세팅하는 방법입니다.
+
+VS Code를 별도로 실행합니다.
+
+Ctrl + Shift + P (Mac은 Cmd + Shift + P)를 눌러 명령 팔레트를 켭니다.
+
+검색창에 shell command를 입력합니다.
+
+Shell Command: Install 'code' command in PATH (또는 한국어 설정 시 PATH에 'code' 명령 설치) 항목이 있다면 클릭합니다.
+
+VS Code와 터미널(PowerShell)을 모두 종료한 후, 다시 켜서 code 명령어를 테스트해 봅니다.
+
+해결 방법 2: 윈도우 환경 변수(Path) 수동 추가
+만약 방법 1에서 해당 메뉴가 보이지 않는다면, 윈도우 시스템에 VS Code 경로를 직접 등록해야 합니다.
+
+1단계: VS Code 설치 경로 확인하기
+보통 VS Code는 사용자 폴더의 아래 경로에 설치됩니다. (윈도우 사용자명 부분을 본인 계정명으로 변경 확인)
+
+C:\Users\사용자명\AppData\Local\Programs\Microsoft VS Code\bin
+※ 주의: 끝이 bin으로 끝나는 경로여야 합니다.
+
+2단계: 환경 변수 편집
+키보드의 Win + R을 눌러 실행 창을 켜고, sysdm.cpl을 입력 후 엔터를 누릅니다. (시스템 속성 창이 뜹니다.)
+
+상단의 [고급] 탭 선택 -> 하단의 [환경 변수(N)...] 버튼을 클릭합니다.
+
+아래쪽 [시스템 변수] 목록에서 Path라는 변수를 찾아 더블 클릭합니다.
+
+우측의 [새로 만들기]를 누르고, 위에서 확인한 VS Code의 bin 폴더 경로를 붙여넣기 합니다.
+
+예시: C:\Users\YourName\AppData\Local\Programs\Microsoft VS Code\bin
+
+모든 창의 [확인]을 눌러 저장합니다.
+
+열려 있던 PowerShell 창을 완전히 닫고 새 창을 열어 code를 실행합니다.
+
+해결 방법 3: PowerShell 프로필에 별칭(Alias) 등록하기
+매번 환경 변수를 만지기 번거롭고, cmd /c code가 아주 잘 작동하는 상황을 활용하고 싶다면 PowerShell에 지름길을 만들어 두는 방법입니다.
+
+PowerShell 창에 아래 명령어를 입력하여 프로필 파일 존재 여부를 확인하고 엽니다.
+
+PowerShell
+notepad $PROFILE
+메모장 창이 뜨면 (파일이 없다고 만들겠냐고 물어보면 '예'를 누르세요) 아래 코드를 한 줄 추가하고 저장합니다.
+
+PowerShell
+function code { cmd /c code $args }
+메모장을 닫고 PowerShell을 재시작하면, 이제 code만 입력해도 뒤의 인자값(-g ...)까지 포함해서 CMD를 통해 깔끔하게 실행됩니다.

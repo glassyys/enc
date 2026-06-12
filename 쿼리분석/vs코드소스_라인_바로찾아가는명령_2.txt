@@ -1,0 +1,33 @@
+Shell Command: Install 'code' command in PATH 을 쳐도 조회되는 내용이 없습니다
+
+아하, VS Code 최신 버전이나 윈도우 환경에서는 명령 팔레트(Ctrl + Shift + P)에서 Install 'code' command in PATH 옵션이 기본적으로 제공되지 않는 경우가 많습니다. (이 기능은 주로 맥OS용 VS Code에서 쓰이거든요!)
+
+조회가 안 되더라도 당황하실 필요 없습니다. 이 경우 가장 확실하고 깔끔한 해결책은 VS Code를 설치할 때 환경 변수 옵션을 체크해 주는 것입니다.
+
+가장 쉽고 빠르게 해결할 수 있는 2가지 우회 방법을 안내해 드릴게요.
+
+방법 1: VS Code 설치 파일 덮어쓰기 (가장 재발 없는 해결책)
+기존에 작성하던 코드나 확장 프로그램(Extension), 설정은 그대로 유지되니 안심하고 진행하셔도 됩니다.
+
+VS Code 공식 홈페이지에서 윈도우용 설치 파일(User Installer)을 다시 다운로드합니다.
+
+설치 파일을 실행하여 진행하다 보면, 아래 그림과 같이 "추가 작업 선택" 창이 나옵니다.
+
+여기서 PATH에 추가(다시 시작한 후 사용할 수 있음) 항목에 반드시 체크를 해줍니다. (기본적으로 체크되어 있지만, 누락되었을 확률이 높습니다.)
+
+설치를 완료한 후, 컴퓨터나 PowerShell을 완전히 껐다가 다시 켜서 code -g ... 명령어를 실행해 봅니다.
+
+방법 2: 임시방편으로 'PowerShell 별칭' 사용하기 (가장 빠른 해결책)
+만약 당장 재설치하기 번거롭고, 질문 주신 본문에서 cmd /c code ...가 작동했던 점을 활용하고 싶다면 PowerShell 자체에 지름길을 만들어 두는 게 가장 빠릅니다.
+
+PowerShell 창을 열고 아래 명령어를 그대로 입력한 뒤 엔터를 누릅니다.
+
+PowerShell
+if (!(Test-Path $PROFILE)) { New-Item -Type File -Path $PROFILE -Force }; notepad $PROFILE
+메모장 창이 하나 열리면, 맨 아랫줄에 다음 코드를 복사해서 붙여넣고 저장(Ctrl + S)합니다.
+
+PowerShell
+function code { cmd /c code -- $args }
+메모장을 닫고, PowerShell 창도 완전히 닫았다가 새로 엽니다.
+
+이제 기존처럼 code -g d:\workspace\enc\쿼리분석\sql_v12_full_new_02.py:100를 입력해 보세요. PowerShell이 알아서 CMD를 통해 VS Code를 호출해 줄 것입니다.
