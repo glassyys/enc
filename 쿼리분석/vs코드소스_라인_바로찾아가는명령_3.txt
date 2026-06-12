@@ -1,3 +1,51 @@
+아래 "방법 2" 안되어서 Microsoft.PowerShell_profile.ps1 파일을
+function code { cmd /c "C:\Users\user\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd" @args }
+
+이 내용으로 
+C:\Users\user\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1
+이렇게 저장후 성공함
+
+
+--작업과정--
+1) 폴더 직접 생성
+PowerShell에서 한 번에 생성:
+powershell
+
+New-Item -ItemType Directory -Path "C:\Users\user\Documents\WindowsPowerShell"
+
+2) 그 다음 프로필 파일 직접 생성:
+powershell
+
+New-Item -ItemType File -Path "C:\Users\user\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+
+3) 그 후 노트패드++로 해당 파일 열어서 아래 내용 입력 후 저장: Microsoft.PowerShell_profile.ps1 파일로저장후
+powershell
+
+function code { cmd /c "C:\Users\user\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd" @args }
+저장 시 인코딩 → UTF-8 선택 (노트패드++ 상단 메뉴 → 인코딩 → UTF-8)
+
+4) 확인
+powershell
+
+Get-Content "C:\Users\user\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+PS C:\Users\user> Get-Content "C:\Users\user\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+function code { cmd /c "C:\Users\user\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd" @args }
+PS C:\Users\user>
+
+4) 저장 후 PowerShell 새로 열고 테스트:
+powershell
+
+code --version
+
+PS C:\Users\user> code --version
+1.124.2
+6928394f91b684055b873eecb8bc281365131f1c
+x64
+PS C:\Users\user>
+
+
+----------------------------
+
 방법 2 사용하지 않고 vs코드를 재설치해도 동일한데 vs코드 삭제를 완전히하고 재설치하면 code명령어를 사용가능할지?
 
 VS Code를 재설치했는데도 동일하다면, 기존에 남아있던 잘못된 레지스트리나 환경 변수 찌꺼기 때문에 새 설치 프로그램이 PATH(환경 변수)를 제대로 업데이트하지 못했을 가능성이 큽니다.
