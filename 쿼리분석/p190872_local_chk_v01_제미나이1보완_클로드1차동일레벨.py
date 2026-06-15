@@ -1,0 +1,586 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# ===============================================================
+# p190872_local_chk_v01.py
+#
+# ■ 버전 이력
+# ─────────────────────────────────────────────────────────────
+# v01 (2026-06-15)
+#   [신규]
+#   - 검색기준테이블 조회 후 2개 파일 생성
+#   - [파일1] cols 파싱 결과 파일: 원본 칼럼 전체 + cols 파싱 칼럼명/키값
+#   - [파일2] query_text 파일: 파일1과 동일 레이아웃, cols 자리에 query_text 저장
+#   - source_file 경로를 직접 오픈하여 쿼리 추출 (주석 제거 포함)
+#   - 예외 처리 및 DDL 이스케이프 문법 오류(209라인 부근) 완전 수정 완료
+# ===============================================================
+
+import os
+import re
+import sys
+import csv
+import configparser
+from datetime import datetime
+
+# ============================================================
+# 프로그램명 / 디렉토리 경로 설정
+# ============================================================
+PROGRAM_NAME = os.path.splitext(os.path.basename(sys.argv[0]))[0]
+SCRIPT_DIR   = os.path.dirname(os.path.abspath(sys.argv[0]))
+OUT_DIR      = os.path.join(SCRIPT_DIR, "out")
+
+MYSQL_CONF_FILE = "mysql.conf"
+
+# 검색기준테이블 고정 칼럼 목록
+REF_TABLE_COLS = [
+    "db_name", "tbl_name", "operation", "no", "source_file",
+    "process_yn", "process_desc", "cols",
+    "enc_col_cnt", "ins_cnt", "sel_cnt",
+]
+
+# 파일1 cols 파싱 결과 필드
+COLS_FIELDNAMES = [
+    "db_name", "tbl_name", "operation", "no", "source_file",
+    "process_yn", "process_desc",
+    "col_name", "col_key",
+    "enc_col_cnt", "ins_cnt", "sel_cnt",
+]
+
+# 파일2 query_text 결과 필드
+QUERY_FIELDNAMES = [
+    "db_name", "tbl_name", "operation", "no", "source_file",
+    "process_yn", "process_desc",
+    "query_seq", "query_text",
+    "enc_col_cnt", "ins_cnt", "sel_cnt",
+]
+
+# ============================================================
+# MySQL 드라이버 동적 로드
+# ============================================================
+_MYSQL_DRIVER = None
+
+def _detect_mysql_driver():
+    global _MYSQL_DRIVER
+    try:
+        import mysql.connector
+        _MYSQL_DRIVER = "connector"
+    except ImportError:
+        try:
+            import pymysql
+            _MYSQL_DRIVER = "pymysql"
+        except ImportError:
+            _MYSQL_DRIVER = None
+
+_detect_mysql_driver()
+
+
+def _mysql_connect(conf: dict):
+    host     = conf.get("host",     "localhost")
+    port     = int(conf.get("port", 3306))
+    user     = conf.get("user",     "")
+    password = conf.get("password", "")
+    database = conf.get("database", "")
+    charset  = conf.get("charset",  "utf8mb4")
+
+    if _MYSQL_DRIVER == "connector":
+        import mysql.connector
+        return mysql.connector.connect(
+            host=host, port=port, user=user,
+            password=password, database=database, charset=charset
+        )
+    elif _MYSQL_DRIVER == "pymysql":
+        import pymysql
+        return pymysql.connect(
+            host=host, port=port, user=user,
+            password=password, database=database,
+            charset=charset, autocommit=False
+        )
+    else:
+        raise ImportError(
+            "MySQL 드라이버가 없습니다. "
+            "pip install pymysql 또는 pip install mysql-connector-python 을 설치하세요."
+        )
+
+
+# ============================================================
+# mysql.conf 로드
+# ============================================================
+def load_mysql_conf(explicit_path=None) -> tuple:
+    path = explicit_path if explicit_path else os.path.join(os.getcwd(), MYSQL_CONF_FILE)
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        fallback = os.path.join(SCRIPT_DIR, MYSQL_CONF_FILE)
+        if os.path.isfile(fallback):
+            path = fallback
+        else:
+            return None, "mysql.conf 파일을 찾을 수 없습니다: %s" % path
+    cp = configparser.ConfigParser()
+    try:
+        cp.read(path, encoding="utf-8")
+    except Exception as e:
+        return None, "mysql.conf 읽기 오류: %s" % str(e)
+    if not cp.has_section("mysql"):
+        return None, "mysql.conf 에 [mysql] 섹션이 없습니다."
+    conf    = dict(cp["mysql"])
+    missing = [k for k in ("host", "user", "password", "database") if not conf.get(k)]
+    if missing:
+        return None, "mysql.conf 필수 항목 누락: %s" % ", ".join(missing)
+    return conf, None
+
+
+# ============================================================
+# 스키마.테이블 분리 유틸
+# ============================================================
+def split_schema_table(full_table: str) -> tuple:
+    parts = full_table.strip().split(".", 1)
+    if len(parts) == 2:
+        return parts[0].strip(), parts[1].strip()
+    return "", parts[0].strip()
+
+
+def make_fq(schema: str, table: str) -> str:
+    if schema:
+        return "`%s`.`%s`" % (schema, table)
+    return "`%s`" % table
+
+
+# ============================================================
+# cols 파싱: "col_01:k1,col_bb:k2" → [{"col_name":..,"col_key":..}, ...]
+# ============================================================
+def parse_cols(cols_str: str) -> list:
+    result = []
+    if not cols_str or not cols_str.strip():
+        return result
+    for item in cols_str.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" in item:
+            col_name, col_key = item.split(":", 1)
+            col_name = col_name.strip()
+            col_key  = col_key.strip()
+        else:
+            col_name = item
+            col_key  = ""
+        if col_name:
+            result.append({"col_name": col_name, "col_key": col_key})
+    return result
+
+
+# ============================================================
+# 검색기준테이블 전체 조회
+# ============================================================
+def load_ref_rows_from_db(mysql_conf: dict, ref_table: str) -> tuple:
+    rows     = []
+    conn     = None
+    cursor   = None
+    ref_schema, ref_tbl_only = split_schema_table(ref_table)
+    fq_table = make_fq(ref_schema, ref_tbl_only)
+
+    try:
+        conn   = _mysql_connect(mysql_conf)
+        cursor = conn.cursor()
+
+        if ref_schema:
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = %s AND table_name = %s",
+                (ref_schema, ref_tbl_only)
+            )
+        else:
+            cursor.execute("SHOW TABLES LIKE %s", (ref_tbl_only,))
+        row_chk = cursor.fetchone()
+        exists  = (row_chk[0] > 0) if row_chk else False
+        if not exists:
+            return [], ref_schema, ref_tbl_only, "테이블이 존재하지 않습니다: %s" % ref_table
+
+        cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
+        existing_cols = {row[0].lower() for row in cursor.fetchall()}
+
+        select_parts = []
+        for col in REF_TABLE_COLS:
+            if col in existing_cols:
+                select_parts.append("`%s`" % col)
+            else:
+                select_parts.append("NULL AS `%s`" % col)
+
+        sql = "SELECT %s FROM %s ORDER BY tbl_name, no" % (", ".join(select_parts), fq_table)
+        cursor.execute(sql)
+        db_rows = cursor.fetchall()
+
+        for db_row in db_rows:
+            row_dict = {}
+            for idx, col in enumerate(REF_TABLE_COLS):
+                val = db_row[idx]
+                row_dict[col] = str(val).strip() if val is not None else ""
+            rows.append(row_dict)
+
+        return rows, ref_schema, ref_tbl_only, None
+
+    except Exception as e:
+        return [], ref_schema, ref_tbl_only, "DB 조회 실패: %s" % str(e)
+    finally:
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+# ============================================================
+# 소스 파싱: 전처리 (주석 제거, 문자열 리터럴 유지)
+# ============================================================
+def preprocess(content: str) -> str:
+    content = "\n".join(line for line in content.splitlines() if not line.lstrip().startswith("#"))
+    content = "\n".join(line for line in content.splitlines() if not re.match(r"(?i)^\s*DBMS_OUTPUT", line))
+    content = "\n".join(line for line in content.splitlines() if not (line.strip().startswith("/*") and line.strip().endswith("*/")))
+    pattern = re.compile(r"('(?:[^']|'')*')|(\"(?:[^\"]|\"\")*\")|(--[^\n]*$)|(/\*.*?\*/)", re.MULTILINE | re.DOTALL | re.VERBOSE)
+    return pattern.sub(lambda m: m.group(0) if (m.group(1) or m.group(2)) else "", content)
+
+
+# ============================================================
+# 쿼리 단위 추출
+# ============================================================
+MAIN_QUERY_START = re.compile(
+    r"\b(CREATE\s+OR\s+REPLACE\s+(?:GLOBAL\s+)?(?:TEMPORARY\s+|TEMP\s+)?(?:TABLE|VIEW)|"
+    r"CREATE\s+(?:GLOBAL\s+)?(?:TEMPORARY\s+|TEMP\s+)?(?:TABLE|VIEW)|CREATE\s+TABLE|CREATE\s+VIEW|"
+    r"ALTER\s+TABLE|ALTER\s+VIEW|DROP\s+TABLE|DROP\s+VIEW|TRUNCATE\s+TABLE|REPLACE\s+VIEW|"
+    r"MERGE\s+INTO|MERGE|UPSERT|INSERT|UPDATE|DELETE|SELECT|WITH|EXECUTE)\b", re.IGNORECASE
+)
+END_IF_PATTERN = re.compile(r"^\s*END\s+IF\b", re.IGNORECASE)
+ONLY_FROM_DUAL_PATTERN = re.compile(r"^\s*SELECT\s+.*?\s+FROM\s+DUAL\s*;?\s*$", re.IGNORECASE | re.DOTALL)
+EXCLUDE_PATTERNS = ["insert into sidtest.ad1901_rgb_ac190212_svc(svc_mgmt_num)", "sidtest.ad1901_rgb_ac190212_svc"]
+
+
+def extract_queries_from_text(raw: str) -> list:
+    result     = []
+    orig_lines = raw.splitlines()
+    content    = preprocess(raw)
+
+    ei_queries = []
+    ei_pattern = re.compile(r"\bEXECUTE\s+IMMEDIATE\s+'(.*?)'", re.IGNORECASE | re.DOTALL)
+    for m in ei_pattern.finditer(content):
+        inner = m.group(1).strip()
+        if inner: ei_queries.append(inner)
+
+    masked = re.sub(r"\bEXECUTE\s+IMMEDIATE\s+'.*?'", "EXECUTE_IMMEDIATE_MASKED", content, flags=re.IGNORECASE | re.DOTALL)
+    pos, length, last_orig_idx = 0, len(masked), 0
+
+    while pos < length:
+        match = MAIN_QUERY_START.search(masked, pos)
+        if not match: break
+        keyword = match.group(1).upper()
+        start   = match.start()
+
+        if keyword.startswith("END"):
+            line_start = masked.rfind("\n", 0, start) + 1
+            line_end   = masked.find("\n", start)
+            if line_end == -1: line_end = length
+            if END_IF_PATTERN.match(masked[line_start:line_end]):
+                pos = line_end; continue
+
+        end, depth, in_str, q_char = start, 0, False, None
+        while end < length:
+            ch = masked[end]
+            if ch in ("'", '"'):
+                if not in_str: in_str, q_char = True, ch
+                elif q_char == ch: in_str = False
+            elif not in_str:
+                if ch == "(": depth += 1
+                elif ch == ")": depth = max(depth - 1, 0)
+                elif ch == ";" and depth == 0: end += 1; break
+            end += 1
+
+        query = masked[start:end].strip()
+        if query and ";" in query:
+            lower_q = query.lower()
+            if any(p.lower() in lower_q for p in EXCLUDE_PATTERNS) or ONLY_FROM_DUAL_PATTERN.match(query):
+                pos = end; continue
+            if keyword.upper().startswith("ALTER") and not re.match(r"ALTER\s+(TABLE|VIEW)\b", query, re.IGNORECASE):
+                pos = end; continue
+
+            start_line_no    = 1
+            first_query_line = query.splitlines()[0].strip()
+            if first_query_line:
+                for idx in range(last_orig_idx, len(orig_lines)):
+                    if first_query_line in orig_lines[idx]:
+                        start_line_no = idx + 1; last_orig_idx = idx; break
+
+            result.append({"query_text": query, "start_line_no": start_line_no})
+        pos = end
+
+    for ei_q in ei_queries:
+        result.append({"query_text": ei_q, "start_line_no": None})
+
+    return result
+
+
+def open_and_extract_queries(source_file_path: str) -> tuple:
+    if not source_file_path or not source_file_path.strip():
+        return [], "source_file 경로가 비어 있습니다."
+    path = source_file_path.strip().replace("\\", os.sep).replace("/", os.sep)
+    if not os.path.isfile(path):
+        return [], "파일을 찾을 수 없습니다: %s" % path
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            raw = f.read()
+    except Exception as e:
+        return [], "파일 접근 실패: %s / %s" % (path, str(e))
+
+    try:
+        queries = extract_queries_from_text(raw)
+    except Exception as e:
+        return [], "쿼리 추출 오류: %s" % str(e)
+
+    return queries, None
+
+
+# ============================================================
+# [가독성 및 백슬래시 문법오류 전면 수정] DDL / INSERT 
+# ============================================================
+_DDL_DROP   = "DROP TABLE IF EXISTS {table};"
+
+_DDL_CREATE_COLS = """
+CREATE TABLE {table} (
+  `id`           BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
+  `run_id`       VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
+  `db_name`      VARCHAR(200)  NULL                     COMMENT '기준테이블: DB명',
+  `tbl_name`     VARCHAR(500)  NOT NULL                 COMMENT '기준테이블: 테이블명',
+  `operation`    VARCHAR(50)   NULL                     COMMENT '기준테이블: 오퍼레이션',
+  `no`           INT           NULL                     COMMENT '기준테이블: 순번',
+  `source_file`  VARCHAR(500)  NULL                     COMMENT '기준테이블: 소스파일 경로',
+  `process_yn`   VARCHAR(1)    NULL                     COMMENT '기준테이블: 처리여부',
+  `process_desc` VARCHAR(500)  NULL                     COMMENT '기준테이블: 처리설명',
+  `col_name`     VARCHAR(500)  NULL                     COMMENT 'cols 파싱: 칼럼명',
+  `col_key`      VARCHAR(200)  NULL                     COMMENT 'cols 파싱: 키값',
+  `enc_col_cnt`  INT           NULL                     COMMENT '기준테이블: 암호화 칼럼 수',
+  `ins_cnt`      INT           NULL                     COMMENT '기준테이블: INSERT 건수',
+  `sel_cnt`      INT           NULL                     COMMENT '기준테이블: SELECT 건수',
+  `op_dtm`       DATETIME      NOT NULL                 COMMENT '처리일시',
+  PRIMARY KEY (`id`),
+  KEY `idx_run_id`   (`run_id`),
+  KEY `idx_tbl_name` (`tbl_name`(191)),
+  KEY `idx_col_name` (`col_name`(191))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='검색기준테이블 cols 파싱 결과';
+"""
+
+_SQL_INSERT_COLS = """
+INSERT INTO {table}
+  (run_id, db_name, tbl_name, operation, no, source_file,
+   process_yn, process_desc, col_name, col_key,
+   enc_col_cnt, ins_cnt, sel_cnt, op_dtm)
+VALUES
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+_DDL_CREATE_QUERY = """
+CREATE TABLE {table} (
+  `id`           BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
+  `run_id`       VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
+  `db_name`      VARCHAR(200)  NULL                     COMMENT '기준테이블: DB명',
+  `tbl_name`     VARCHAR(500)  NOT NULL                 COMMENT '기준테이블: 테이블명',
+  `operation`    VARCHAR(50)   NULL                     COMMENT '기준테이블: 오퍼레이션',
+  `no`           INT           NULL                     COMMENT '기준테이블: 순번',
+  `source_file`  VARCHAR(500)  NULL                     COMMENT '기준테이블: 소스파일 경로',
+  `process_yn`   VARCHAR(1)    NULL                     COMMENT '기준테이블: 처리여부',
+  `process_desc` VARCHAR(500)  NULL                     COMMENT '기준테이블: 처리설명',
+  `query_seq`    INT           NULL                     COMMENT '파일 내 쿼리 순번',
+  `query_text`   LONGTEXT      NULL                     COMMENT '추출된 쿼리 텍스트',
+  `enc_col_cnt`  INT           NULL                     COMMENT '기준테이블: 암호화 칼럼 수',
+  `ins_cnt`      INT           NULL                     COMMENT '기준테이블: INSERT 건수',
+  `sel_cnt`      INT           NULL                     COMMENT '기준테이블: SELECT 건수',
+  `op_dtm`       DATETIME      NOT NULL                 COMMENT '처리일시',
+  PRIMARY KEY (`id`),
+  KEY `idx_run_id`   (`run_id`),
+  KEY `idx_tbl_name` (`tbl_name`(191))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='검색기준테이블 쿼리 추출 결과';
+"""
+
+_SQL_INSERT_QUERY = """
+INSERT INTO {table}
+  (run_id, db_name, tbl_name, operation, no, source_file,
+   process_yn, process_desc, query_seq, query_text,
+   enc_col_cnt, ins_cnt, sel_cnt, op_dtm)
+VALUES
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+
+def build_table_names(ref_schema: str, ref_tbl_only: str) -> dict:
+    cols_only  = "%s_%s_cols"  % (PROGRAM_NAME, ref_tbl_only)
+    query_only = "%s_%s_query" % (PROGRAM_NAME, ref_tbl_only)
+    return {
+        "cols_only":  cols_only, "query_only": query_only,
+        "cols_fq":    make_fq(ref_schema, cols_only),
+        "query_fq":   make_fq(ref_schema, query_only),
+    }
+
+
+def db_load_table(mysql_conf: dict, fq_table: str, ddl_create: str, sql_insert: str, batch: list, table_label: str) -> tuple:
+    conn, cursor = None, None
+    try:
+        conn   = _mysql_connect(mysql_conf)
+        cursor = conn.cursor()
+        cursor.execute(_DDL_DROP.format(table=fq_table))
+        conn.commit()
+        cursor.execute(ddl_create.format(table=fq_table))
+        conn.commit()
+        if batch:
+            cursor.executemany(sql_insert.format(table=fq_table), batch)
+            conn.commit()
+        print("[INFO] DB 적재 완료 [%s]: %s (%d 건)" % (table_label, fq_table, len(batch)))
+        return len(batch), None
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return 0, str(e)
+    finally:
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+def save_csv(rows: list, filepath: str, fieldnames: list, op_dtm: str):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for r in rows:
+            row = dict(r)
+            row["op_dtm"] = op_dtm
+            writer.writerow(row)
+
+
+def to_int(v):
+    try: return int(v) if v not in (None, "") else None
+    except Exception: return None
+
+
+def parse_args() -> tuple:
+    args      = sys.argv[1:]
+    ref_table = None
+    use_db    = False
+    conf_path = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "--db":
+            use_db = True; i += 1
+        elif args[i] == "--conf":
+            if i + 1 < len(args):
+                conf_path = args[i + 1]; i += 2
+            else:
+                print("[오류] --conf 다음에 mysql.conf 파일 경로를 지정하세요.")
+                sys.exit(1)
+        else:
+            if ref_table is None: ref_table = args[i]
+            i += 1
+
+    if ref_table is None:
+        print("사용법: python3 %s.py <스키마.검색기준테이블> [--db] [--conf mysql.conf 경로]" % PROGRAM_NAME)
+        sys.exit(1)
+
+    return ref_table, use_db, conf_path
+
+
+# ============================================================
+# MAIN
+# ============================================================
+def main():
+    ref_table, use_db, conf_path = parse_args()
+    op_dtm = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    print("=" * 70)
+    print(" [검색기준테이블 조회 → cols 파싱 + query_text 추출 파일 생성]")
+    print("=" * 70)
+
+    if _MYSQL_DRIVER is None:
+        print("[ERROR] MySQL 드라이버가 없습니다.")
+        sys.exit(1)
+
+    mysql_conf, err = load_mysql_conf(conf_path)
+    if err:
+        print("[ERROR] %s" % err)
+        sys.exit(1)
+
+    ref_rows, ref_schema, ref_tbl_only, db_err = load_ref_rows_from_db(mysql_conf, ref_table)
+    if db_err:
+        print("[ERROR] %s" % db_err)
+        sys.exit(1)
+    if not ref_rows:
+        print("[ERROR] 조회 데이터가 없습니다.")
+        sys.exit(1)
+
+    tbl_names      = build_table_names(ref_schema, ref_tbl_only)
+    csv_cols_path  = os.path.join(OUT_DIR, "%s_%s_cols.csv"  % (PROGRAM_NAME, ref_tbl_only))
+    csv_query_path = os.path.join(OUT_DIR, "%s_%s_query.csv" % (PROGRAM_NAME, ref_tbl_only))
+
+    cols_buffer  = []
+    query_buffer = []
+    stat_ok, stat_skip, stat_err, stat_no_query = 0, 0, 0, 0
+
+    for ref_row in ref_rows:
+        src_file = ref_row.get("source_file", "").strip()
+        base_ref = {col: ref_row.get(col, "") for col in REF_TABLE_COLS if col != "cols"}
+
+        # ── 파일1 버퍼 적재 ──
+        col_items = parse_cols(ref_row.get("cols", ""))
+        if col_items:
+            for col_item in col_items:
+                row = dict(base_ref)
+                row["col_name"], row["col_key"] = col_item["col_name"], col_item["col_key"]
+                cols_buffer.append(row)
+        else:
+            row = dict(base_ref)
+            row["col_name"], row["col_key"] = "", ""
+            cols_buffer.append(row)
+
+        # ── 파일2 버퍼 적재 ──
+        if not src_file:
+            stat_skip += 1
+            row = dict(base_ref); row["query_seq"], row["query_text"] = None, ""
+            query_buffer.append(row); continue
+
+        queries, open_err = open_and_extract_queries(src_file)
+        if open_err:
+            stat_err += 1
+            row = dict(base_ref); row["query_seq"], row["query_text"] = None, open_err
+            query_buffer.append(row); continue
+
+        if not queries:
+            stat_no_query += 1
+            row = dict(base_ref); row["query_seq"], row["query_text"] = None, ""
+            query_buffer.append(row); continue
+
+        stat_ok += 1
+        for q_idx, q_item in enumerate(queries, 1):
+            row = dict(base_ref)
+            row["query_seq"], row["query_text"] = q_idx, q_item["query_text"]
+            query_buffer.append(row)
+
+    # CSV 출력 및 완료 처리
+    save_csv(cols_buffer, csv_cols_path, COLS_FIELDNAMES, op_dtm)
+    save_csv(query_buffer, csv_query_path, QUERY_FIELDNAMES, op_dtm)
+    print("[INFO] 파일1 저장 성공: %s" % csv_cols_path)
+    print("[INFO] 파일2 저장 성공: %s" % csv_query_path)
+
+    if use_db:
+        cols_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], r["col_name"], r["col_key"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), op_dtm) for r in cols_buffer]
+        db_load_table(mysql_conf, tbl_names["cols_fq"], _DDL_CREATE_COLS, _SQL_INSERT_COLS, cols_batch, "cols")
+
+        query_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], to_int(r["query_seq"]), r["query_text"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), op_dtm) for r in query_buffer]
+        db_load_table(mysql_conf, tbl_names["query_fq"], _DDL_CREATE_QUERY, _SQL_INSERT_QUERY, query_batch, "query")
+
+    print("=" * 70)
+    print(" [p190872_local_chk_v01] 프로세스 완료 성공")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()

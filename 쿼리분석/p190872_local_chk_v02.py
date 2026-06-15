@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================
-# p190872_local_chk_v01.py
+# p190872_local_chk_v02.py
 #
 # ■ 버전 이력
 # ─────────────────────────────────────────────────────────────
+# v02 (2026-06-12)
+#   [추가] 파일3 (매칭 결과) 생성
+#   - 파일2(query_text) 에서 tbl_name 이 소스 또는 타겟 테이블에 포함되고
+#     파일1(cols) 의 col_name 이 해당 query_text 에 \b완전일치로 존재하는 행 추출
+#   - 파일1 레이아웃 기준으로 아래 칼럼 추가:
+#       query_seq, match_type(SOURCE/TARGET),
+#       line_number(소스파일 전체 기준 절대행번호), matched_line(추출된 행 내용)
+#   - 매칭 결과가 없는 파일1 행도 결과에 유지 (나머지 칼럼 NULL/'')
+#   - 파일명: out/{프로그램명}_{테이블명}_match.csv
+#   - DB 테이블: {ref_schema}.{프로그램명}_{테이블명}_match
+#   - 소스/타겟 테이블 추출: INSERT INTO/OVERWRITE → TARGET, FROM/JOIN → SOURCE
+#
 # v01 (2026-06-12)
 #   [신규]
 #   - 검색기준테이블 조회 후 2개 파일 생성
@@ -49,31 +61,31 @@
 #
 # ■ 실행 형식
 # ─────────────────────────────────────────────────────────────
-# python3 p190872_local_chk_v01.py \
+# python3 p190872_local_chk_v02.py \
 #     <스키마.검색기준테이블> \
 #     [--db] [--conf mysql.conf 경로]
 #
 # ■ 실제 실행 예시
 # ─────────────────────────────────────────────────────────────
 # [예시1] 파일만 생성 / DB 미등록
-# python3 p190872_local_chk_v01.py \
+# python3 p190872_local_chk_v02.py \
 #     midp_db.enc_col_target \
 #     --conf D:\chksrc\mysql.conf
 #
 # [예시2] 파일 생성 + DB 등록 (Windows)
-# python3 p190872_local_chk_v01.py \
+# python3 p190872_local_chk_v02.py \
 #     midp_db.enc_col_target \
 #     --db \
 #     --conf D:\chksrc\mysql.conf
 #
 # [예시3] 파일 생성 + DB 등록 (Linux)
-# python3 /home/p190872/chksrc/p190872_local_chk_v01.py \
+# python3 /home/p190872/chksrc/p190872_local_chk_v02.py \
 #     midp_db.enc_col_target \
 #     --db \
 #     --conf /home/p190872/chksrc/mysql.conf
 #
 # [예시4] mysql.conf 자동탐색 (스크립트 디렉토리 또는 실행경로)
-# python3 p190872_local_chk_v01.py \
+# python3 p190872_local_chk_v02.py \
 #     midp_db.enc_col_target
 #
 # ■ 파라미터
@@ -119,6 +131,16 @@
 # process_yn, process_desc,
 # query_seq, query_text,
 # enc_col_cnt, ins_cnt, sel_cnt
+#
+# ■ 출력 파일3 레이아웃 (매칭 결과)
+# ─────────────────────────────────────────────────────────────
+# [파일1 칼럼] db_name, tbl_name, operation, no, source_file,
+#             process_yn, process_desc, col_name, col_key,
+#             enc_col_cnt, ins_cnt, sel_cnt
+# [추가 칼럼] query_seq, match_type, line_number, matched_line
+# - 매칭 없는 파일1 행도 포함 (query_seq/match_type/line_number/matched_line = NULL/'')
+# - 파일명: out/{프로그램명}_{테이블명}_match.csv
+# - DB 테이블: {ref_schema}.{프로그램명}_{테이블명}_match
 # ===============================================================
 
 import os
