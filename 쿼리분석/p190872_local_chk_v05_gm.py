@@ -10,131 +10,7 @@
 #   - 파일명 및 프로그램 식별자를 p190872_local_chk_v05_gm 으로 변경
 #   - 파싱 칼럼 기준(col_name) 검색 시 기존 LIKE(in 연산) 방식을 제거하고 정규식 완전일치(\b단어\b) 조건으로 롤백/수정
 #   - 결과 DB 테이블명 생성 규칙을 변경하여 프로그램명이 포함되도록 수정 ({PROGRAM_NAME}_{테이블명}_...)
-# ===============================================================
-#
-# ■ 버전 이력
-# ─────────────────────────────────────────────────────────────
-# v04_gm_patched_v2 (2026-06-16)
-#   [파일3 단건 롤백 및 파일4 다건 유지 분리 반영]
-#   - 요건 반영: 파일3(_match.csv)은 다건 적재를 취소하고 기존처럼 모수 테이블 기준으로 
-#                 최초 검출된 단건만 매칭하여 행 유지를 보장하는 방식으로 롤백
-#   - 파일4(_enc.csv)는 직전 요건대로 query_text 내에 매칭되는 행이 여러 건 나오면 
-#                 있는 만큼 행을 확장하여 전수 추출하고 enc_code 변환값 매핑 유지
-#   - v03/v04의 핵심 기조인 소스 파일 전체(raw) 기반 테이블 검증 및 VS Code 커맨드 연동 유지
-# ===============================================================
-#
-# ■ 프로그램 설명
-# ─────────────────────────────────────────────────────────────
-# 1) 실행 시 파라미터: 스키마.검색기준테이블, [--db], [--conf]
-# 2) 서버 MySQL 에서 <검색기준테이블> 전체 데이터 조회
-#     - 조회 칼럼(고정 11항목):
-#       db_name, tbl_name, operation, no, source_file,
-#       process_yn, process_desc, cols,
-#       enc_col_cnt, ins_cnt, sel_cnt
-# 3) 조회된 각 행의 source_file 경로를 직접 오픈
-#     - source_file 이 비어있거나 파일이 없으면 스킵 후 경고 출력
-#     - 인코딩 오류 시 errors="ignore" 로 계속 처리
-# 4) 각 소스 파일에서 쿼리 단위로 추출 (주석 제거 포함)
-# 5) [파일1] cols 파싱 결과 파일 생성
-#     - 파일명: out/{프로그램명}_{마지막스키마테이블}_cols.csv
-#     - cols "col_01:k1,col_bb:k2" → 칼럼별로 행 분리
-#     - 칼럼: db_name, tbl_name, operation, no, source_file,
-#             process_yn, process_desc,
-#             col_name, col_key,          ← cols 파싱 결과
-#             enc_col_cnt, ins_cnt, sel_cnt
-# 6) [파일2] query_text 파일 생성
-#     - 파일명: out/{프로그램명}_{마지막스키마테이블}_query.csv
-#     - 파일1과 동일 레이아웃, col_name/col_key 자리에 query_text 저장
-#     - 칼럼: db_name, tbl_name, operation, no, source_file,
-#             process_yn, process_desc,
-#             query_seq, query_text,      ← 쿼리 추출 결과
-#             enc_col_cnt, ins_cnt, sel_cnt
-# 7) [--db] 옵션: 2개 CSV + MySQL 테이블 각각 적재
-#     - 테이블1: {ref_schema}.{PROGRAM_NAME}_{tbl_only}_cols
-#     - 테이블2: {ref_schema}.{PROGRAM_NAME}_{tbl_only}_query
-#
-# ■ 실행 형식
-# ─────────────────────────────────────────────────────────────
-# python3 p190872_local_chk_v05_gm.py \
-#      <스키마.검색기준테이블> \
-#      [--db] [--conf mysql.conf 경로]
-#
-# ■ 실제 실행 예시
-# ─────────────────────────────────────────────────────────────
-# [예시1] 파일만 생성 / DB 미등록
-# python3 p190872_local_chk_v05_gm.py \
-#      midp_db.enc_col_target \
-#      --conf D:\chksrc\mysql.conf
-#
-# [예시2] 파일 생성 + DB 등록 (Windows)
-# python3 p190872_local_chk_v05_gm.py \
-#      midp_db.enc_col_target \
-#      --db \
-#      --conf D:\chksrc\mysql.conf
-#
-# [예시3] 파일 생성 + DB 등록 (Linux)
-# python3 /home/p190872/chksrc/p190872_local_chk_v05_gm.py \
-#      midp_db.enc_col_target \
-#      --db \
-#      --conf /home/p190872/chksrc/mysql.conf
-#
-# [예시4] mysql.conf 자동탐색 (스크립트 디렉토리 또는 실행경로)
-# python3 p190872_local_chk_v05_gm.py \
-#      midp_db.enc_col_target
-#
-# ■ 파라미터
-# ─────────────────────────────────────────────────────────────
-# 스키마.검색기준테이블 : MySQL 테이블명 (스키마 필수: schema.tablename)
-# --db                  : 파일 생성 + MySQL DB 등록 (mysql.conf 필요)
-# --conf 경로           : mysql.conf 파일 경로 지정 (미지정 시 자동탐색)
-#
-# ■ [mysql.conf 파일 예시]
-# ─────────────────────────────────────────────────────────────
-# [mysql]
-# host     = 192.168.1.100
-# port     = 3306
-# user     = midp_user
-# password = secret
-# database = midp_db
-# charset  = utf8mb4
-#
-# ■ 검색기준테이블 레이아웃 (MySQL)
-# ─────────────────────────────────────────────────────────────
-# db_name      VARCHAR(200)  - DB명
-# tbl_name     VARCHAR(500)  - 테이블명
-# operation    VARCHAR(50)   - 오퍼레이션 (INSERT/SELECT 등)
-# no           INT           - 순번
-# source_file  VARCHAR(500)  - 소스파일 경로 (직접 오픈 대상)
-# process_yn   VARCHAR(1)    - 처리여부 (Y/N)
-# process_desc VARCHAR(500)  - 처리설명
-# cols         VARCHAR(2000) - 칼럼목록 (col_01:k1,col_bb:k2 형식)
-# enc_col_cnt  INT           - 암호화 칼럼 수
-# ins_cnt      INT           - INSERT 건수
-# sel_cnt      INT           - SELECT 건수
-#
-# ■ 출력 파일1 레이아웃 (cols 파싱)
-# ─────────────────────────────────────────────────────────────
-# db_name, tbl_name, operation, no, source_file,
-# process_yn, process_desc,
-# col_name, col_key,
-# enc_col_cnt, ins_cnt, sel_cnt
-#
-# ■ 출력 파일2 레이아웃 (query_text)
-# ─────────────────────────────────────────────────────────────
-# db_name, tbl_name, operation, no, source_file,
-# process_yn, process_desc,
-# query_seq, query_text,
-# enc_col_cnt, ins_cnt, sel_cnt
-#
-# ■ 출력 파일3 레이아웃 (매칭 결과)
-# ─────────────────────────────────────────────────────────────
-# [파일1 칼럼] db_name, tbl_name, operation, no, source_file,
-#              process_yn, process_desc, col_name, col_key,
-#              enc_col_cnt, ins_cnt, sel_cnt
-# [추가 칼럼] query_seq, match_type, line_number, matched_line
-# - 매칭 없는 파일1 행도 포함 (query_seq/match_type/line_number/matched_line = NULL/'')
-# - 파일명: out/{프로그램명}_{테이블명}_match.csv
-# - DB 테이블: {ref_schema}.{프로그램명}_{테이블명}_match
+#   - (접수 요건 추가): 테이블명 생성 규칙을 {ref_tbl_only}_{구분}_{tb_add_gbn} 형태로 변경 (tb_add_gbn = "v05")
 # ===============================================================
 
 import os
@@ -641,10 +517,17 @@ VALUES
 
 
 def build_table_names(ref_schema: str, ref_tbl_only: str) -> dict:
-    cols_only  = "%s_%s_cols"  % (PROGRAM_NAME, ref_tbl_only)
-    query_only = "%s_%s_query" % (PROGRAM_NAME, ref_tbl_only)
-    match_only = "%s_%s_match" % (PROGRAM_NAME, ref_tbl_only)
-    enc_only   = "%s_%s_enc"   % (PROGRAM_NAME, ref_tbl_only)
+    # PROGRAM_NAME(예: p190872_local_chk_v05_gm)에서 정규식으로 "v05" 파트만 추출
+    # 매칭 실패 시 기본값으로 "v05"를 사용하도록 설계
+    match = re.search(r'_(v\d+)(?:_|$)', PROGRAM_NAME)
+    tb_add_gbn = match.group(1) if match else "v05"
+
+    # 요건 반영: {ref_tbl_only}_{구분}_{tb_add_gbn} 형식으로 변경
+    cols_only  = "%s_cols_%s"  % (ref_tbl_only, tb_add_gbn)
+    query_only = "%s_query_%s" % (ref_tbl_only, tb_add_gbn)
+    match_only = "%s_match_%s" % (ref_tbl_only, tb_add_gbn)
+    enc_only   = "%s_enc_%s"   % (ref_tbl_only, tb_add_gbn)
+    
     return {
         "cols_only":  cols_only, "query_only": query_only, "match_only": match_only, "enc_only": enc_only,
         "cols_fq":    make_fq(ref_schema, cols_only),
@@ -715,7 +598,8 @@ def parse_args() -> tuple:
                 print("[오류] --conf 다음에 mysql.conf 파일 경로를 지정하세요.")
                 sys.exit(1)
         else:
-            if ref_table is None: ref_table = args[i]
+            if ref_table is None: ref_table = args[args_idx] if 'args_idx' in locals() else args[i]
+            ref_table = args[i]
             i += 1
 
     if ref_table is None:
