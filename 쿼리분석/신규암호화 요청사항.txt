@@ -1,3 +1,9 @@
+D:\workspace\enc\쿼리분석\p190872_local_chk_v05_gm.py
+실행하니 rx = compiled_col_patterns.get(c_up)
+NameError:name 'compiled_col_patterns' is not defined
+오류가 납니다. 수정요청합니다.
+
+
 입력된 파라미터 <검색기준테이블> 조회후 요청한 조건에 의해
 입력된 <분석대상_디렉토리> 하위 소스들에 대해 요청조건에 의한
 tbl_name,cols 값이 포함된 행을 찾아서 파일생성후
