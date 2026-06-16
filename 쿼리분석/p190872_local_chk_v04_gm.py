@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================
-# p190872_local_chk_v03_gm.py
+# p190872_local_chk_v04_gm.py
 #
 # ■ 버전 이력
 # ─────────────────────────────────────────────────────────────
@@ -61,31 +61,31 @@
 #
 # ■ 실행 형식
 # ─────────────────────────────────────────────────────────────
-# python3 p190872_local_chk_v03_gm.py \
+# python3 p190872_local_chk_v04_gm.py \
 #      <스키마.검색기준테이블> \
 #      [--db] [--conf mysql.conf 경로]
 #
 # ■ 실제 실행 예시
 # ─────────────────────────────────────────────────────────────
 # [예시1] 파일만 생성 / DB 미등록
-# python3 p190872_local_chk_v03_gm.py \
+# python3 p190872_local_chk_v04_gm.py \
 #      midp_db.enc_col_target \
 #      --conf D:\chksrc\mysql.conf
 #
 # [예시2] 파일 생성 + DB 등록 (Windows)
-# python3 p190872_local_chk_v03_gm.py \
+# python3 p190872_local_chk_v04_gm.py \
 #      midp_db.enc_col_target \
 #      --db \
 #      --conf D:\chksrc\mysql.conf
 #
 # [예시3] 파일 생성 + DB 등록 (Linux)
-# python3 /home/p190872/chksrc/p190872_local_chk_v03_gm.py \
+# python3 /home/p190872/chksrc/p190872_local_chk_v04_gm.py \
 #      midp_db.enc_col_target \
 #      --db \
 #      --conf /home/p190872/chksrc/mysql.conf
 #
 # [예시4] mysql.conf 자동탐색 (스크립트 디렉토리 또는 실행경로)
-# python3 p190872_local_chk_v03_gm.py \
+# python3 p190872_local_chk_v04_gm.py \
 #      midp_db.enc_col_target
 #
 # ■ 파라미터
@@ -175,6 +175,28 @@
 #   - VS Code 바로가기 명령어(code -g) 및 미매칭 행 NULL 보존 법칙 원형 유지
 # ===============================================================
 
+# ■ 버전 이력
+# ─────────────────────────────────────────────────────────────
+# v04_gm (2026-06-16)
+#   [기능 확장 및 암호화 코드 맵핑 반영]
+#   - 파일명 및 프로그램 식별자를 p190872_local_chk_v04_gm 으로 변경
+#   - 요건 3 반영: col_key 분리값 매칭 시 (key1->e1, key2->e2, key3->e3, key4->e4) 변환 로직 추가
+#   - 요건 4 반영: 변환된 코드 칼럼(enc_code)을 포함한 [파일4] 및 전용 DB 테이블 적재 프로세스 신설
+#   - v03_gm 기준 소스 파일 전체(raw) 내 tbl_name 존재 조건 및 쿼리별 칼럼 순환 스캔 엔진 원형 보존
+#   - VS Code 바로가기 명령어(code -g) 및 미매칭 행 NULL 보존 법칙 프로세스 유지
+# ===============================================================
+
+# ■ 버전 이력
+# ─────────────────────────────────────────────────────────────
+# v04_gm_patched_v2 (2026-06-16)
+#   [파일3 단건 롤백 및 파일4 다건 유지 분리 반영]
+#   - 요건 반영: 파일3(_match.csv)은 다건 적재를 취소하고 기존처럼 모수 테이블 기준으로 
+#                 최초 검출된 단건만 매칭하여 행 유지를 보장하는 방식으로 롤백
+#   - 파일4(_enc.csv)는 직전 요건대로 query_text 내에 매칭되는 행이 여러 건 나오면 
+#                 있는 만큼 행을 확장하여 전수 추출하고 enc_code 변환값 매핑 유지
+#   - v03/v04의 핵심 기조인 소스 파일 전체(raw) 기반 테이블 검증 및 VS Code 커맨드 연동 유지
+# ===============================================================
+
 import os
 import re
 import sys
@@ -214,11 +236,21 @@ QUERY_FIELDNAMES = [
     "enc_col_cnt", "ins_cnt", "sel_cnt",
 ]
 
-# 파일3 매칭 결과 최종 필드 레이아웃
+# 파일3 매칭 결과 최종 필드 레이아웃 (단건 모수 유지형)
 MATCH_FIELDNAMES = [
     "db_name", "tbl_name", "operation", "no", "source_file",
     "process_yn", "process_desc",
     "col_name", "col_key",
+    "enc_col_cnt", "ins_cnt", "sel_cnt",
+    "query_seq", "match_type", "line_number", "matched_line",
+    "vscode_open_cmd",
+]
+
+# 파일4 암호화 코드 맵핑 변환 결과 필드 레이아웃 (다건 전수 확장형)
+ENC_FIELDNAMES = [
+    "db_name", "tbl_name", "operation", "no", "source_file",
+    "process_yn", "process_desc",
+    "col_name", "col_key", "enc_code",
     "enc_col_cnt", "ins_cnt", "sel_cnt",
     "query_seq", "match_type", "line_number", "matched_line",
     "vscode_open_cmd",
@@ -334,6 +366,20 @@ def parse_cols(cols_str: str) -> list:
         if col_name:
             result.append({"col_name": col_name, "col_key": col_key})
     return result
+
+
+# ============================================================
+# 파싱 칼럼 키값 코드 변환 함수
+# ============================================================
+def convert_key_to_code(col_key: str) -> str:
+    if not col_key:
+        return ""
+    k_lower = col_key.strip().lower()
+    if k_lower == "key1":   return "e1"
+    elif k_lower == "key2": return "e2"
+    elif k_lower == "key3": return "e3"
+    elif k_lower == "key4": return "e4"
+    return col_key
 
 
 # ============================================================
@@ -501,7 +547,7 @@ def open_and_extract_queries(source_file_path: str) -> tuple:
     try:
         queries = extract_queries_from_text(raw)
     except Exception as e:
-        return [], "쿼리 추출 오류: %s" % str(e), [], ""
+        return [], "쿼리 추출 오류: %s" % str(e), []
 
     return queries, None, raw.splitlines(), raw
 
@@ -614,16 +660,57 @@ VALUES
   (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
+_DDL_CREATE_ENC = """
+CREATE TABLE {table} (
+  `id`               BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
+  `run_id`           VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
+  `db_name`          VARCHAR(200)  NULL                     COMMENT '기준테이블: DB명',
+  `tbl_name`         VARCHAR(500)  NOT NULL                 COMMENT '기준테이블: 테이블명',
+  `operation`        VARCHAR(50)   NULL                     COMMENT '기준테이블: 오퍼레이션',
+  `no`               INT           NULL                     COMMENT '기준테이블: 순번',
+  `source_file`      VARCHAR(500)  NULL                     COMMENT '기준테이블: 소스파일 경로',
+  `process_yn`       VARCHAR(1)    NULL                     COMMENT '기준테이블: 처리여부',
+  `process_desc`     VARCHAR(500)  NULL                     COMMENT '기준테이블: 처리설명',
+  `col_name`         VARCHAR(500)  NULL                     COMMENT 'cols 파싱: 칼럼명',
+  `col_key`          VARCHAR(200)  NULL                     COMMENT 'cols 파싱: 원본키값',
+  `enc_code`         VARCHAR(200)  NULL                     COMMENT '코드 변환 맵핑값 (e1~e4)',
+  `enc_col_cnt`      INT           NULL                     COMMENT '기준테이블: 암호화 칼럼 수',
+  `ins_cnt`          INT           NULL                     COMMENT '기준테이블: INSERT 건수',
+  `sel_cnt`          INT           NULL                     COMMENT '기준테이블: SELECT 건수',
+  `query_seq`        INT           NULL                     COMMENT '매칭 쿼리 순번',
+  `match_type`       VARCHAR(20)   NULL                     COMMENT 'SOURCE / TARGET 구분',
+  `line_number`      INT           NULL                     COMMENT '소스 절대 행번호',
+  `matched_line`     TEXT          NULL                     COMMENT '매칭 라인 텍스트 내용',
+  `vscode_open_cmd`  VARCHAR(1000) NULL                     COMMENT 'VS Code 다이렉트 바로가기 커맨드',
+  `op_dtm`           DATETIME      NOT NULL                 COMMENT '처리일시',
+  PRIMARY KEY (`id`),
+  KEY `idx_run_id`    (`run_id`),
+  KEY `idx_tbl_name`  (`tbl_name`(191)),
+  KEY `idx_enc_code`  (`enc_code`(191))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='암호화 코드 키값 맵핑 변환 결과';
+"""
+
+_SQL_INSERT_ENC = """
+INSERT INTO {table}
+  (run_id, db_name, tbl_name, operation, no, source_file,
+   process_yn, process_desc, col_name, col_key, enc_code, enc_col_cnt, ins_cnt, sel_cnt,
+   query_seq, match_type, line_number, matched_line, vscode_open_cmd, op_dtm)
+VALUES
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
 
 def build_table_names(ref_schema: str, ref_tbl_only: str) -> dict:
     cols_only  = "%s_cols"  % ref_tbl_only
     query_only = "%s_query" % ref_tbl_only
     match_only = "%s_match" % ref_tbl_only
+    enc_only   = "%s_enc"   % ref_tbl_only
     return {
-        "cols_only":  cols_only, "query_only": query_only, "match_only": match_only,
+        "cols_only":  cols_only, "query_only": query_only, "match_only": match_only, "enc_only": enc_only,
         "cols_fq":    make_fq(ref_schema, cols_only),
         "query_fq":   make_fq(ref_schema, query_only),
         "match_fq":   make_fq(ref_schema, match_only),
+        "enc_fq":     make_fq(ref_schema, enc_only),
     }
 
 
@@ -742,17 +829,12 @@ def main():
     print("[INFO] 조회 완료: %d 행" % len(ref_rows))
     print("-" * 70)
 
-    print("[INFO] 검색기준 cols 목록: 화면출력 생략 복원하려면 print문 주석제거")
-#    print("  %-5s  %-35s  %-50s  %s" % ("No", "tbl_name", "cols", "파싱된 칼럼 목록"))
+    print("[INFO] 검색기준 cols 목록: 화면출력 생략")
     print("  " + "-" * 110)
     for i, ref_row in enumerate(ref_rows, 1):
         tbl    = ref_row.get("tbl_name", "")
         cols   = ref_row.get("cols", "")
         parsed = parse_cols(cols)
-        col_names = ", ".join(
-            "%s(%s)" % (c["col_name"], c["col_key"]) if c["col_key"] else c["col_name"] for c in parsed
-        ) if parsed else "(없음)"
-#        print("  %-5d  %-35s  %-50s  [%s]" % (i, tbl, cols, col_names))
     print("-" * 70)
 
     tbl_names      = build_table_names(ref_schema, ref_tbl_only)
@@ -760,10 +842,12 @@ def main():
     csv_cols_path  = os.path.join(OUT_DIR, "%s_cols.csv"  % ref_tbl_only)
     csv_query_path = os.path.join(OUT_DIR, "%s_query.csv" % ref_tbl_only)
     csv_match_path = os.path.join(OUT_DIR, "%s_match.csv" % ref_tbl_only)
+    csv_enc_path   = os.path.join(OUT_DIR, "%s_enc.csv"   % ref_tbl_only)
 
     cols_buffer  = []
     query_buffer = []
     match_buffer = []
+    enc_buffer   = []
 
     stat_total      = len(ref_rows)
     stat_ok, stat_skip, stat_err, stat_no_query = 0, 0, 0, 0
@@ -792,7 +876,7 @@ def main():
             row["col_name"], row["col_key"] = "", ""
             cols_buffer.append(row)
 
-        # ── [파일2 추출 및 파일3 실시간 결합 엔진] ──
+        # ── [파일2 추출 및 파일3/파일4 전수 매칭 결합 엔진] ──
         if not src_file:
             stat_skip += 1
             msg = "source_file 비어있음 (tbl_name=%s)" % tbl_name
@@ -806,9 +890,13 @@ def main():
                 row_m["col_name"], row_m["col_key"] = c_item["col_name"], c_item["col_key"]
                 row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
                 match_buffer.append(row_m)
+                
+                row_e = dict(base_ref)
+                row_e["col_name"], row_e["col_key"] = c_item["col_name"], c_item["col_key"]
+                row_e.update({"enc_code": convert_key_to_code(c_item["col_key"]), "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
+                enc_buffer.append(row_e)
             continue
 
-        # [요건 보완] 파일 원천 전체 텍스트(raw_content) 로드 추가
         queries, open_err, orig_lines, raw_content = open_and_extract_queries(src_file)
         raw_content_upper = raw_content.upper()
 
@@ -825,6 +913,11 @@ def main():
                 row_m["col_name"], row_m["col_key"] = c_item["col_name"], c_item["col_key"]
                 row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": open_err, "vscode_open_cmd": ""})
                 match_buffer.append(row_m)
+                
+                row_e = dict(base_ref)
+                row_e["col_name"], row_e["col_key"] = c_item["col_name"], c_item["col_key"]
+                row_e.update({"enc_code": convert_key_to_code(c_item["col_key"]), "query_seq": "", "match_type": "", "line_number": "", "matched_line": open_err, "vscode_open_cmd": ""})
+                enc_buffer.append(row_e)
             continue
 
         if not queries:
@@ -839,12 +932,20 @@ def main():
                 row_m["col_name"], row_m["col_key"] = c_item["col_name"], c_item["col_key"]
                 row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
                 match_buffer.append(row_m)
+                
+                row_e = dict(base_ref)
+                row_e["col_name"], row_e["col_key"] = c_item["col_name"], c_item["col_key"]
+                row_e.update({"enc_code": convert_key_to_code(c_item["col_key"]), "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
+                enc_buffer.append(row_e)
             continue
 
         stat_ok += 1
-        col_match_success_map = { (c["col_name"], c["col_key"]): False for c in current_row_cols } if current_row_cols else { ("", ""): False }
+        
+        # 파일3용 단건 매칭 여부 추적 사전 구조 구성
+        file3_match_success_map = { (c["col_name"], c["col_key"]): False for c in current_row_cols } if current_row_cols else { ("", ""): False }
+        # 파일4용 다건 매칭 여부 추적 사전 구조 구성
+        file4_match_success_map = { (c["col_name"], c["col_key"]): False for c in current_row_cols } if current_row_cols else { ("", ""): False }
 
-        # [조건 1 변경] 파일 전체 본문(raw_content_upper) 내에 tbl_name이 존재한다면 참(True)으로 판단
         is_table_in_file = tbl_up in raw_content_upper
 
         for q_idx, q_item in enumerate(queries, 1):
@@ -856,49 +957,76 @@ def main():
             row_q["query_seq"], row_q["query_text"] = q_idx, raw_query
             query_buffer.append(row_q)
 
-            # 파일 단위 테이블 매칭 통과 시 개별 쿼리 내 칼럼 LIKE 매칭 스캔 수행
             if is_table_in_file:
                 if current_row_cols:
                     for c_item in current_row_cols:
                         c_name, c_key = c_item["col_name"], c_item["col_key"]
                         c_up = c_name.strip().upper()
 
-                        # [조건 2] 해당 개별 쿼리 본문 내에 칼럼명이 포함되는지 검사
                         if c_up in query_text_upper:
-                            col_match_success_map[(c_name, c_key)] = True
-                            line_number, matched_line = None, ""
-                            
-                            # 절대 줄번호 동적 탐색
+                            # ─── 파일4 전용 다건 전수 라인 추출 프로세스 시작 ───
+                            matched_lines_found = []
                             if line_no_offset is not None and orig_lines:
                                 start_idx = line_no_offset - 1
                                 for idx in range(start_idx, len(orig_lines)):
                                     if c_up in orig_lines[idx].upper():
-                                        line_number = idx + 1
-                                        matched_line = orig_lines[idx].strip()
-                                        break
+                                        matched_lines_found.append({
+                                            "line_number": idx + 1,
+                                            "matched_line": orig_lines[idx].strip()
+                                        })
+                                    if ";" in orig_lines[idx] and idx > start_idx + 1:
+                                        if (idx - start_idx) >= len(raw_query.splitlines()):
+                                            break
                             
-                            if not matched_line:
+                            if not matched_lines_found:
                                 for line in raw_query.splitlines():
                                     if c_up in line.upper():
-                                        matched_line = line.strip(); break
+                                        matched_lines_found.append({
+                                            "line_number": line_no_offset if line_no_offset is not None else "",
+                                            "matched_line": line.strip()
+                                        })
+                                        break
 
-                            # VS Code 원클릭 이동 커맨드 바인딩
-                            vsc_cmd = "code -g %s:%s" % (src_file, line_number) if line_number else "code -g %s" % src_file
+                            # 1) [기존 복원 - 파일3 용] 단건 모수 테이블 매칭 적재 가동
+                            if matched_lines_found and not file3_match_success_map[(c_name, c_key)]:
+                                file3_match_success_map[(c_name, c_key)] = True
+                                first_f = matched_lines_found[0] # 최초 검출된 1건만 취함
+                                l_num_3 = first_f["line_number"]
+                                l_src_3 = first_f["matched_line"]
+                                vsc_cmd_3 = "code -g %s:%s" % (src_file, l_num_3) if l_num_3 else "code -g %s" % src_file
 
-                            row_m = dict(base_ref)
-                            row_m["col_name"], row_m["col_key"] = c_name, c_key
-                            row_m.update({
-                                "query_seq": q_idx, 
-                                "match_type": "MATCHED",
-                                "line_number": line_number if line_number is not None else "", 
-                                "matched_line": matched_line,
-                                "vscode_open_cmd": vsc_cmd
-                            })
-                            match_buffer.append(row_m)
+                                row_m = dict(base_ref)
+                                row_m["col_name"], row_m["col_key"] = c_name, c_key
+                                row_m.update({
+                                    "query_seq": q_idx, "match_type": "MATCHED",
+                                    "line_number": l_num_3, "matched_line": l_src_3, 
+                                    "vscode_open_cmd": vsc_cmd_3
+                                })
+                                match_buffer.append(row_m)
+
+                            # 2) [다건 전수 유지 - 파일4 용] 매칭되는 행 수만큼 루프 돌려 전량 확장 적재
+                            if matched_lines_found:
+                                file4_match_success_map[(c_name, c_key)] = True
+                                for item_f in matched_lines_found:
+                                    l_num_4 = item_f["line_number"]
+                                    l_src_4 = item_f["matched_line"]
+                                    vsc_cmd_4 = "code -g %s:%s" % (src_file, l_num_4) if l_num_4 else "code -g %s" % src_file
+
+                                    row_e = dict(base_ref)
+                                    row_e["col_name"], row_e["col_key"] = c_name, c_key
+                                    row_e.update({
+                                        "enc_code": convert_key_to_code(c_key),
+                                        "query_seq": q_idx, "match_type": "MATCHED",
+                                        "line_number": l_num_4, "matched_line": l_src_4, 
+                                        "vscode_open_cmd": vsc_cmd_4
+                                    })
+                                    enc_buffer.append(row_e)
                 else:
-                    # 칼럼 지정 값이 없는 로우의 경우 테이블 존재 성공만으로 추출 결과 구성
-                    col_match_success_map[("", "")] = True
+                    # 칼럼 선언 없는 테이블 매칭 단독 로우 제어
+                    file3_match_success_map[("", "")] = True
+                    file4_match_success_map[("", "")] = True
                     vsc_cmd = "code -g %s:%s" % (src_file, line_no_offset) if line_no_offset else "code -g %s" % src_file
+                    
                     row_m = dict(base_ref)
                     row_m.update({
                         "col_name": "", "col_key": "", "query_seq": q_idx, "match_type": "MATCHED",
@@ -907,13 +1035,29 @@ def main():
                     })
                     match_buffer.append(row_m)
 
-        # ── [미매칭 행 구제 법칙] 소스파일 탐색 후 단 한 번도 매칭 내역 전무할 경우 NULL 로우 보존 ──
-        for (c_name, c_key), is_success in col_match_success_map.items():
+                    row_e = dict(base_ref)
+                    row_e.update({
+                        "col_name": "", "col_key": "", "enc_code": "", "query_seq": q_idx, "match_type": "MATCHED",
+                        "line_number": line_no_offset if line_no_offset is not None else "", "matched_line": "",
+                        "vscode_open_cmd": vsc_cmd
+                    })
+                    enc_buffer.append(row_e)
+
+        # ── [파일3 미매칭 구제] 모수 행 형태 보존용 공란 적재 ──
+        for (c_name, c_key), is_success in file3_match_success_map.items():
             if not is_success:
                 row_m = dict(base_ref)
                 row_m["col_name"], row_m["col_key"] = c_name, c_key
                 row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
                 match_buffer.append(row_m)
+
+        # ── [파일4 미매칭 구제] 모수 행 형태 보존용 공란 적재 ──
+        for (c_name, c_key), is_success in file4_match_success_map.items():
+            if not is_success:
+                row_e = dict(base_ref)
+                row_e["col_name"], row_e["col_key"] = c_name, c_key
+                row_e.update({"enc_code": convert_key_to_code(c_key), "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
+                enc_buffer.append(row_e)
 
     print("[INFO] source_file 처리 완료:")
     print("  - 전체 ref_row 수  : %8d 건" % stat_total)
@@ -923,7 +1067,8 @@ def main():
     print("  - 쿼리 추출 없음   : %8d 건" % stat_no_query)
     print("  - 파일1(cols) 행수 : %8d 건" % len(cols_buffer))
     print("  - 파일2(query) 행수: %8d 건" % len(query_buffer))
-    print("  - 파일3(match) 행수: %8d 건" % len(match_buffer))
+    print("  - 파일3(match) 행수: %8d 건 (모수 기준 단건 롤백 완료)" % len(match_buffer))
+    print("  - 파일4(enc) 행수  : %8d 건 (다건 전수 확장 유지)" % len(enc_buffer))
     print("-" * 70)
 
     if error_log:
@@ -935,13 +1080,15 @@ def main():
     save_csv(cols_buffer, csv_cols_path, COLS_FIELDNAMES, op_dtm)
     save_csv(query_buffer, csv_query_path, QUERY_FIELDNAMES, op_dtm)
     save_csv(match_buffer, csv_match_path, MATCH_FIELDNAMES, op_dtm)
+    save_csv(enc_buffer, csv_enc_path, ENC_FIELDNAMES, op_dtm)
     print("[INFO] 파일1 저장 완료: %s  (%d 건)" % (csv_cols_path, len(cols_buffer)))
     print("[INFO] 파일2 저장 완료: %s  (%d 건)" % (csv_query_path, len(query_buffer)))
     print("[INFO] 파일3 저장 완료: %s  (%d 건)" % (csv_match_path, len(match_buffer)))
+    print("[INFO] 파일4 저장 완료: %s  (%d 건)" % (csv_enc_path, len(enc_buffer)))
     print("-" * 70)
 
-    cols_inserted, query_inserted, match_inserted = 0, 0, 0
-    cols_err, query_err, match_err = None, None, None
+    cols_inserted, query_inserted, match_inserted, enc_inserted = 0, 0, 0, 0
+    cols_err, query_err, match_err, enc_err = None, None, None, None
 
     if use_db:
         print("[INFO] DB 적재 시작 ...")
@@ -953,6 +1100,9 @@ def main():
 
         match_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], r["col_name"], r["col_key"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), to_int(r["query_seq"]), r["match_type"], to_int(r["line_number"]), r["matched_line"], r["vscode_open_cmd"], op_dtm) for r in match_buffer]
         match_inserted, match_err = db_load_table(mysql_conf, tbl_names["match_fq"], _DDL_CREATE_MATCH, _SQL_INSERT_MATCH, match_batch, "파일3-match")
+
+        enc_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], r["col_name"], r["col_key"], r["enc_code"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), to_int(r["query_seq"]), r["match_type"], to_int(r["line_number"]), r["matched_line"], r["vscode_open_cmd"], op_dtm) for r in enc_buffer]
+        enc_inserted, enc_err = db_load_table(mysql_conf, tbl_names["enc_fq"], _DDL_CREATE_ENC, _SQL_INSERT_ENC, enc_batch, "파일4-enc")
         print("-" * 70)
 
     print("=" * 70)
@@ -976,11 +1126,15 @@ def main():
     print("  [파일3] 정밀 매칭 분석 결과")
     print("    저장 경로          : %s" % csv_match_path)
     print("    레코드 수          : %d 건" % len(match_buffer))
+    print("  [파일4] 코드 변환 매칭 결과")
+    print("    저장 경로          : %s" % csv_enc_path)
+    print("    레코드 수          : %d 건" % len(enc_buffer))
     print("-" * 70)
     if use_db:
         print("  [파일1] DB 테이블    : %s (적재: %d건)" % (tbl_names["cols_fq"], cols_inserted)) if not cols_err else print("  [파일1] DB 적재      : 실패 (%s)" % cols_err)
         print("  [파일2] DB 테이블    : %s (적재: %d건)" % (tbl_names["query_fq"], query_inserted)) if not query_err else print("  [파일2] DB 적재      : 실패 (%s)" % query_err)
         print("  [파일3] DB 테이블    : %s (적재: %d건)" % (tbl_names["match_fq"], match_inserted)) if not match_err else print("  [파일3] DB 적재      : 실패 (%s)" % match_err)
+        print("  [파일4] DB 테이블    : %s (적재: %d건)" % (tbl_names["enc_fq"], enc_inserted)) if not enc_err else print("  [파일4] DB 적재      : 실패 (%s)" % enc_err)
     else:
         print("  DB 적재              : 생략 (--db 옵션 미지정)")
     print("=" * 70)
