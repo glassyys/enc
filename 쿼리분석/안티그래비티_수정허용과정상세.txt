@@ -1,0 +1,92 @@
+안티그래비티에서 제미나이 이용수정시 accept 후 서브밋을 하는데 이과정에 대한 상세내용은?
+
+안티그래비티에서 Gemini를 사용해 코드를 수정할 때의 일반적인 흐름은 다음과 같습니다.
+
+1. Gemini가 수정안 생성
+
+예를 들어 "이 함수 최적화해줘"라고 요청하면 Gemini가 변경안을 생성합니다.
+
+이때 실제 파일을 바로 덮어쓰지 않고 Diff(변경 비교 화면) 를 보여줍니다. 원본 코드와 변경 코드의 차이를 확인할 수 있습니다.
+
+2. Accept
+
+Accept 를 누르면 Gemini가 제안한 변경 내용이 실제 작업 파일(Workspace)에 적용됩니다.
+
+중요한 점은:
+
+Accept = 파일 수정
+Commit(Checkin) = 아님
+
+즉, Accept 후에는 파일만 수정된 상태이며 아직 버전 저장소에는 반영되지 않습니다.
+
+3. 변경 검토
+
+안티그래비티 또는 Git의 변경 목록에서:
+
+Modified
+Changed
+Pending Changes
+
+등으로 표시됩니다.
+
+이 시점에:
+
+코드 검토
+컴파일
+테스트
+Diff 재확인
+
+을 수행하는 것이 좋습니다.
+
+Gemini가 의도하지 않은 부분까지 수정하는 경우도 있으므로 Diff 검토가 중요합니다.
+
+4. Submit(Checkin/Commit)
+
+검토가 끝나면:
+
+Checkin
+Commit
+Submit
+
+을 수행합니다.
+
+이때 저장되는 내용은:
+
+Accept된 변경사항
+사용자가 직접 수정한 내용
+
+모두 포함됩니다.
+
+Commit 이후에는 해당 시점이 버전 이력으로 남게 됩니다.
+
+5. Accept 후 Commit 전 상태
+
+가장 중요한 구간입니다.
+
+원본
+ ↓
+Gemini 제안
+ ↓
+Accept
+ ↓
+(수정됨, 아직 Commit 안됨)
+ ↓
+Commit
+
+Accept만 하고 Commit을 안 했다면:
+
+버전관리 서버에는 없음
+로컬 워크스페이스에만 존재
+Undo Changes나 Revert 시 사라질 수 있음
+
+따라서 큰 수정은 Accept 후 바로 Commit하거나 Shelve를 만들어 두는 것이 안전합니다.
+
+질문
+
+안티그래비티에서 말씀하신 "서브밋" 이
+
+Plastic SCM(Unity Version Control)의 Checkin
+Git Commit
+Antigravity Agent의 Submit 작업
+
+중 어떤 것인지 알려주시면 실제 화면 기준으로 더 자세히 설명드리겠습니다.
