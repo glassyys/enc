@@ -3,146 +3,33 @@
 # ===============================================================
 # p190872_local_chk_v05_gm_test.py
 #
-# ■ 버전 이력
-# ─────────────────────────────────────────────────────────────
-# v05_gm_test (2026-06-21)
-#   - --mid 파라미터(aaa,bbb,ccc 형식 또는 여러 개 지정) 기능 추가
-#   - 지정한 디렉토리 하위의 mid 파라미터 하위 디렉토리에서 소스 검색해서 작업하도록 수정
-#   - 로컬 환경 실행을 위해 source_file 경로를 로컬 파일 경로로 매핑하여 읽기 수행
+# ■ 소스 내용 정리
+#   - MySQL 데이터베이스의 검색기준테이블을 조회하여, 지정한 검색 디렉토리 하위의 소스 파일들
+#     (.sql, .hql, .uld, .ld, .sh)에서 테이블명 및 컬럼명이 일치하는 위치를 검색합니다.
+#   - 검색 결과 중 암호화 코드 변환 매칭 결과를 p190872_{검색기준테이블}_enc.csv 파일로 생성하고
+#     서버 MySQL에 p190872_{검색기준테이블}_enc 결과 테이블로 등록합니다.
+#   - 실행 시 화면에 출력된 내용을 out 디렉토리에 각 MID별로 p190872_{검색기준테이블}_{MID}_print.txt 로그 파일로 생성합니다.
+#   - 검색기준테이블에서 값이 존재하지 않는(스키마에 없는) 불필요한 빈 칼럼들은 결과 파일 및 테이블의 컬럼에서 제외합니다.
 #
-# v05_gm (2026-06-16)
-#   [추출 조건 및 테이블명 변경]
-#   - 파일명 및 프로그램 식별자를 p190872_local_chk_v05_gm 으로 변경
-#   - 파싱 칼럼 기준(col_name) 검색 시 기존 LIKE(in 연산) 방식을 제거하고 정규식 완전일치(\b단어\b) 조건으로 롤백/수정
-#   - 결과 DB 테이블명 생성 규칙을 변경하여 프로그램명이 포함되도록 수정 ({PROGRAM_NAME}_{테이블명}_...)
+# ■ 실행 방식
+# # 실행방식: python p190872_local_chk_v05_gm_test.py [검색기준테이블] [검색디렉토리] [mid 검색디렉토리 MID하위디렉토리] --db --conf D:\chksrc\mysql.conf --where old|new --chk default|encdec_no
 #
-# v04_gm_patched_v2 (2026-06-16)
-#   [파일3 단건 롤백 및 파일4 다건 유지 분리 반영]
-#   - 요건 반영: 파일3(_match.csv)은 다건 적재를 취소하고 기존처럼 모수 테이블 기준으로 
-#                 최초 검출된 단건만 매칭하여 행 유지를 보장하는 방식으로 롤백
-#   - 파일4(_enc.csv)는 직전 요건대로 query_text 내에 매칭되는 행이 여러 건 나오면 
-#                 있는 만큼 행을 확장하여 전수 추출하고 enc_code 변환값 매핑 유지
-#   - v03/v04의 핵심 기조인 소스 파일 전체(raw) 기반 테이블 검증 및 VS Code 커맨드 연동 유지
-# ===============================================================
-#
-# ■ 프로그램 설명
-# ─────────────────────────────────────────────────────────────
-# 1) 실행 시 파라미터: 스키마.검색기준테이블, [--db], [--conf], [--mid], [--dir]
-# 2) 서버 MySQL 에서 <검색기준테이블> 전체 데이터 조회
-#     - 조회 칼럼(고정 11항목):
-#       db_name, tbl_name, operation, no, source_file,
-#       process_yn, process_desc, cols,
-#       enc_col_cnt, ins_cnt, sel_cnt
-# 3) 조회된 각 행의 source_file 경로를 직접 오픈 (또는 --mid 및 --dir 기준 로컬 파일 매핑)
-#     - source_file 이 비어있거나 파일이 없으면 스킵 후 경고 출력
-#     - 인코딩 오류 시 errors="ignore" 로 계속 처리
-# 4) 각 소스 파일에서 쿼리 단위로 추출 (주석 제거 포함)
-# 5) [파일1] cols 파싱 결과 파일 생성
-#     - 파일명: out/{프로그램명}_{마지막스키마테이블}_cols.csv
-#     - cols "col_01:k1,col_bb:k2" → 칼럼별로 행 분리
-#     - 칼럼: db_name, tbl_name, operation, no, source_file,
-#             process_yn, process_desc,
-#             col_name, col_key,          ← cols 파싱 결과
-#             enc_col_cnt, ins_cnt, sel_cnt
-# 6) [파일2] query_text 파일 생성
-#     - 파일명: out/{프로그램명}_{마지막스키마테이블}_query.csv
-#     - 파일1과 동일 레이아웃, col_name/col_key 자리에 query_text 저장
-#     - 칼럼: db_name, tbl_name, operation, no, source_file,
-#             process_yn, process_desc,
-#             query_seq, query_text,      ← 쿼리 추출 결과
-#             enc_col_cnt, ins_cnt, sel_cnt
-# 7) [--db] 옵션: 2개 CSV + MySQL 테이블 각각 적재
-#     - 테이블1: {ref_schema}.{PROGRAM_NAME}_{tbl_only}_cols
-#     - 테이블2: {ref_schema}.{PROGRAM_NAME}_{tbl_only}_query
-#
-# ■ 실행 형식
-# ─────────────────────────────────────────────────────────────
-# python3 p190872_local_chk_v05_gm_test.py \
-#      <스키마.검색기준테이블> \
-#      [--db] [--conf mysql.conf 경로] \
-#      [--mid aaa,bbb] [--dir 지정디렉토리]
-#
-# ■ 실제 실행 예시
-# ─────────────────────────────────────────────────────────────
-# [예시1] 파일만 생성 / DB 미등록
-# python3 p190872_local_chk_v05_gm_test.py \
-#      midp_db.enc_col_target \
-#      --conf D:\chksrc\mysql.conf
-#
-# [예시2] 파일 생성 + DB 등록 (Windows)
-# python3 p190872_local_chk_v05_gm_test.py \
-#      midp_db.enc_col_target \
-#      --db \
-#      --conf D:\chksrc\mysql.conf
-#
-# [예시3] --mid 파라미터 및 로컬 지정 디렉토리 매핑 테스트 (Windows)
-# python3 p190872_local_chk_v05_gm_test.py \
-#      midp_db.enc_col_target \
-#      --mid SID,TMT \
-#      --dir D:\source \
-#      --conf D:\chksrc\mysql.conf
-#
-# [예시4] --mid 다중 옵션 지정 및 대상 디렉토리를 positional 인자로 넘기는 형식
-# python3 p190872_local_chk_v05_gm_test.py \
-#      D:\source \
-#      midp_db.enc_col_target \
-#      --mid SID --mid TMT
-#
-# ■ 파라미터
-# ─────────────────────────────────────────────────────────────
-# 스키마.검색기준테이블 : MySQL 테이블명 (스키마 필수: schema.tablename)
-# --db                  : 파일 생성 + MySQL DB 등록 (mysql.conf 필요)
-# --conf 경로           : mysql.conf 파일 경로 지정 (미지정 시 자동탐색)
-# --mid 값              : 서브디렉토리 (aaa,bbb 형식 또는 다중 지정 가능)
-# --dir 디렉토리경로    : 검색 및 매핑 대상 지정 디렉토리 (positional 인자로도 지정 가능)
-#
-# ■ [mysql.conf 파일 예시]
-# ─────────────────────────────────────────────────────────────
-# [mysql]
-# host     = 192.168.1.100
-# port     = 3306
-# user     = midp_user
-# password = secret
-# database = midp_db
-# charset  = utf8mb4
-#
-# ■ 검색기준테이블 레이아웃 (MySQL)
-# ─────────────────────────────────────────────────────────────
-# db_name      VARCHAR(200)  - DB명
-# tbl_name     VARCHAR(500)  - 테이블명
-# operation    VARCHAR(50)   - 오퍼레이션 (INSERT/SELECT 등)
-# no           INT           - 순번
-# source_file  VARCHAR(500)  - 소스파일 경로 (직접 오픈 대상)
-# process_yn   VARCHAR(1)    - 처리여부 (Y/N)
-# process_desc VARCHAR(500)  - 처리설명
-# cols         VARCHAR(2000) - 칼럼목록 (col_01:k1,col_bb:k2 형식)
-# enc_col_cnt  INT           - 암호화 칼럼 수
-# ins_cnt      INT           - INSERT 건수
-# sel_cnt      INT           - SELECT 건수
-#
-# ■ 출력 파일1 레이아웃 (cols 파싱)
-# ─────────────────────────────────────────────────────────────
-# db_name, tbl_name, operation, no, source_file,
-# process_yn, process_desc,
-# col_name, col_key,
-# enc_col_cnt, ins_cnt, sel_cnt
-#
-# ■ 출력 파일2 레이아웃 (query_text)
-# ─────────────────────────────────────────────────────────────
-# db_name, tbl_name, operation, no, source_file,
-# process_yn, process_desc,
-# query_seq, query_text,
-# enc_col_cnt, ins_cnt, sel_cnt
-#
-# ■ 출력 파일3 레이아웃 (매칭 결과)
-# ─────────────────────────────────────────────────────────────
-# [파일1 칼럼] db_name, tbl_name, operation, no, source_file,
-#              process_yn, process_desc, col_name, col_key,
-#              enc_col_cnt, ins_cnt, sel_cnt
-# [추가 칼럼] query_seq, match_type, line_number, matched_line
-# - 매칭 없는 파일1 행도 포함 (query_seq/match_type/line_number/matched_line = NULL/'')
-# - 파일명: out/{프로그램명}_{테이블명}_match_v05_test.csv
-# - DB 테이블: {ref_schema}.{프로그램명}_{테이블명}_match
+# v05_gm_test_modified_v5 (2026-06-23)
+#   - 4차 수정요청 반영:
+#     1) 실행 출력 요약 결과에 MID별로 생성된 화면 출력 로그 텍스트 파일(p190872_~MID_print.txt)들의 경로 출력 기능 추가
+#     2) 매칭 행 중에서 순수 컬럼 단독 참조(a.col1, col2), 단순 별칭 지정(col3 as col_b), 순수 컬럼간 비교(a.col1 = b.col22), 그리고 주석부분을 제외하고 추출하는 필터링 로직 (should_include_matched_line) 추가
+#   - 검색기준테이블 신규 9컬럼 레이아웃 반영 (db_name, tbl_name, column_name, type_name, integer_idx, mig_dec, tobe_enc_key, tobe_enc_rsn, asis_enc_yn)
+#   - 매칭라인 검사 옵션 --chk default | encdec_no 추가 및 이에 따른 매칭 라인 필터링 적용
+#   - 파일1(cols), 파일2(query), 파일3(match) 생성 및 적재 생략 (파일4 enc만 생성 및 적재)
+#   - 생성되는 파일 및 테이블명의 접두사로 'p190872_' 추가
+#   - 전혀 값이 없는 불필요한 항목(검색기준테이블 스키마에 존재하지 않는 컬럼)을 결과 CSV 및 DB 컬럼에서 동적 제외
+#   - 화면출력 로그파일(.txt)을 MID별로 개별 생성 (out/p190872_{테이블명}_{MID}_print.txt)
+#   - CLI 옵션 --where old | new 추가 및 이에 따른 DB 조회 WHERE 조건 제어
+#   - 실행구조 변경: positional 인자로 [검색기준테이블], [검색디렉토리], [MID 하위디렉토리들] 지정
+#   - [MID 하위디렉토리들] 미지정 시 전체 검색 수행
+#   - 소스파일 매칭: [검색디렉토리] 하위의 모든 소스파일(.sql, .hql, .uld, .ld, .sh)에서 단어 매칭 및 추출
+#   - 화면출력양식 요구사항 반영 (MID 단위 헤더 출력 및 매칭 라인 출력)
+#   - 주석내용(내용정리, 한줄 실행방식, 수정이력) 추가
 # ===============================================================
 
 import os
@@ -161,48 +48,20 @@ OUT_DIR      = os.path.join(SCRIPT_DIR, "out")
 
 MYSQL_CONF_FILE = "mysql.conf"
 
-# 검색기준테이블 고정 칼럼 목록
+# 검색기준테이블 표준 칼럼 목록
 REF_TABLE_COLS = [
-    "db_name", "tbl_name", "operation", "no", "source_file",
-    "process_yn", "process_desc", "cols",
-    "enc_col_cnt", "ins_cnt", "sel_cnt",
+    "db_name", "tbl_name", "column_name", "type_name",
+    "integer_idx", "mig_dec", "tobe_enc_key", "tobe_enc_rsn", "asis_enc_yn",
 ]
 
-# 파일1 cols 파싱 결과 필드
-COLS_FIELDNAMES = [
-    "db_name", "tbl_name", "operation", "no", "source_file",
-    "process_yn", "process_desc",
-    "col_name", "col_key",
-    "enc_col_cnt", "ins_cnt", "sel_cnt",
-]
+# 화면 출력을 동시에 txt 파일로 저장하는 유틸리티
+print_file = None
 
-# 파일2 query_text 결과 필드
-QUERY_FIELDNAMES = [
-    "db_name", "tbl_name", "operation", "no", "source_file",
-    "process_yn", "process_desc",
-    "query_seq", "query_text",
-    "enc_col_cnt", "ins_cnt", "sel_cnt",
-]
-
-# 파일3 매칭 결과 최종 필드 레이아웃 (단건 모수 유지형)
-MATCH_FIELDNAMES = [
-    "db_name", "tbl_name", "operation", "no", "source_file",
-    "process_yn", "process_desc",
-    "col_name", "col_key",
-    "enc_col_cnt", "ins_cnt", "sel_cnt",
-    "query_seq", "match_type", "line_number", "matched_line",
-    "vscode_open_cmd",
-]
-
-# 파일4 암호화 코드 맵핑 변환 결과 필드 레이아웃 (다건 전수 확장형)
-ENC_FIELDNAMES = [
-    "db_name", "tbl_name", "operation", "no", "source_file",
-    "process_yn", "process_desc",
-    "col_name", "col_key", "enc_code",
-    "enc_col_cnt", "ins_cnt", "sel_cnt",
-    "query_seq", "match_type", "line_number", "matched_line",
-    "vscode_open_cmd",
-]
+def log_print(msg=""):
+    print(msg)
+    if print_file:
+        print_file.write(str(msg) + "\n")
+        print_file.flush()
 
 # ============================================================
 # MySQL 드라이버 동적 로드
@@ -331,9 +190,9 @@ def convert_key_to_code(col_key: str) -> str:
 
 
 # ============================================================
-# 검색기준테이블 전체 조회
+# 검색기준테이블 전체 조회 (유연한 칼럼명 체크 및 WHERE 옵션 지원)
 # ============================================================
-def load_ref_rows_from_db(mysql_conf: dict, ref_table: str) -> tuple:
+def load_ref_rows_from_db(mysql_conf: dict, ref_table: str, where_opt: str) -> tuple:
     rows     = []
     conn     = None
     cursor   = None
@@ -355,33 +214,104 @@ def load_ref_rows_from_db(mysql_conf: dict, ref_table: str) -> tuple:
         row_chk = cursor.fetchone()
         exists  = (row_chk[0] > 0) if row_chk else False
         if not exists:
-            return [], ref_schema, ref_tbl_only, "테이블이 존재하지 않습니다: %s" % ref_table
+            return [], ref_schema, ref_tbl_only, [], "테이블이 존재하지 않습니다: %s" % ref_table
 
         cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
         existing_cols = {row[0].lower() for row in cursor.fetchall()}
 
-        select_parts = []
-        for col in REF_TABLE_COLS:
-            if col in existing_cols:
-                select_parts.append("`%s`" % col)
-            else:
-                select_parts.append("NULL AS `%s`" % col)
+        # 유사 칼럼명 매핑 사전
+        col_mappings = {
+            "db_name": ["db_name", "db"],
+            "tbl_name": ["tbl_name", "table_name", "tbl"],
+            "column_name": ["column_name", "cols", "col_name", "col"],
+            "type_name": ["type_name"],
+            "integer_idx": ["integer_idx"],
+            "mig_dec": ["mig_dec"],
+            "tobe_enc_key": ["tobe_enc_key", "col_key", "key"],
+            "tobe_enc_rsn": ["tobe_enc_rsn"],
+            "asis_enc_yn": ["asis_enc_yn", "asis_enc"],
+        }
 
-        sql = "SELECT %s FROM %s ORDER BY tbl_name, no" % (", ".join(select_parts), fq_table)
+        # Where 조건을 위한 실제 칼럼 매핑 확인
+        key_col = None
+        for syn in ["tobe_enc_key", "col_key", "key", "cols", "column_name", "col_name"]:
+            if syn.lower() in existing_cols:
+                key_col = syn
+                break
+
+        asis_col = None
+        for syn in ["asis_enc_yn", "asis_enc"]:
+            if syn.lower() in existing_cols:
+                asis_col = syn
+                break
+
+        select_parts = []
+        resolved_mapping = {}
+        for target_col, synonyms in col_mappings.items():
+            found = False
+            for syn in synonyms:
+                if syn.lower() in existing_cols:
+                    select_parts.append("`%s` AS `%s`" % (syn, target_col))
+                    resolved_mapping[target_col] = syn
+                    found = True
+                    break
+            if not found:
+                select_parts.append("NULL AS `%s`" % target_col)
+                resolved_mapping[target_col] = None
+
+        # WHERE 절 구축
+        conditions = []
+        if key_col:
+            conditions.append("`%s` IS NOT NULL AND `%s` <> ''" % (key_col, key_col))
+        
+        if where_opt == "old":
+            if asis_col:
+                conditions.append("`%s` = 'Y'" % asis_col)
+            else:
+                print("[WARN] 테이블에 asis_enc_yn 칼럼이 없어 asis_enc_yn = 'Y' 조건을 적용하지 못했습니다.")
+        elif where_opt == "new":
+            if asis_col:
+                conditions.append("`%s` = 'N'" % asis_col)
+            else:
+                print("[WARN] 테이블에 asis_enc_yn 칼럼이 없어 asis_enc_yn = 'N' 조건을 적용하지 못했습니다.")
+
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        order_parts = []
+        if resolved_mapping.get("tbl_name"):
+            order_parts.append("`%s`" % resolved_mapping["tbl_name"])
+        if resolved_mapping.get("no"):
+            order_parts.append("`%s`" % resolved_mapping["no"])
+
+        sql = "SELECT %s FROM %s %s" % (", ".join(select_parts), fq_table, where_clause)
+        if order_parts:
+            sql += " ORDER BY %s" % ", ".join(order_parts)
+
         cursor.execute(sql)
         db_rows = cursor.fetchall()
 
+        selected_keys = list(col_mappings.keys())
         for db_row in db_rows:
             row_dict = {}
-            for idx, col in enumerate(REF_TABLE_COLS):
+            for idx, col in enumerate(selected_keys):
                 val = db_row[idx]
                 row_dict[col] = str(val).strip() if val is not None else ""
             rows.append(row_dict)
 
-        return rows, ref_schema, ref_tbl_only, None
+        # 실제로 검색기준테이블에 존재하는 유효한 기준 칼럼 리스트 산출 (cols, col_key, source_file 등은 매칭 상세 영역에서 제어하므로 제외)
+        valid_base_cols = []
+        for target_col in col_mappings.keys():
+            if target_col in ("cols", "col_key", "source_file"):
+                continue
+            if resolved_mapping.get(target_col) is not None:
+                valid_base_cols.append(target_col)
+
+        return rows, ref_schema, ref_tbl_only, valid_base_cols, None
 
     except Exception as e:
-        return [], ref_schema, ref_tbl_only, "DB 조회 실패: %s" % str(e)
+        return [], ref_schema, ref_tbl_only, [], "DB 조회 실패: %s" % str(e)
     finally:
         if cursor:
             try: cursor.close()
@@ -505,159 +435,70 @@ def open_and_extract_queries(source_file_path: str) -> tuple:
 # ============================================================
 _DDL_DROP   = "DROP TABLE IF EXISTS {table};"
 
-_DDL_CREATE_COLS = """
-CREATE TABLE {table} (
-  `id`           BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
-  `run_id`       VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
-  `db_name`      VARCHAR(200)  NULL                     COMMENT '기준테이블: DB명',
-  `tbl_name`     VARCHAR(500)  NOT NULL                 COMMENT '기준테이블: 테이블명',
-  `operation`    VARCHAR(50)   NULL                     COMMENT '기준테이블: 오퍼레이션',
-  `no`           INT           NULL                     COMMENT '기준테이블: 순번',
-  `source_file`  VARCHAR(500)  NULL                     COMMENT '기준테이블: 소스파일 경로',
-  `process_yn`   VARCHAR(1)    NULL                     COMMENT '기준테이블: 처리여부',
-  `process_desc` VARCHAR(500)  NULL                     COMMENT '기준테이블: 처리설명',
-  `col_name`     VARCHAR(500)  NULL                     COMMENT 'cols 파싱: 칼럼명',
-  `col_key`      VARCHAR(200)  NULL                     COMMENT 'cols 파싱: 키값',
-  `enc_col_cnt`  INT           NULL                     COMMENT '기준테이블: 암호화 칼럼 수',
-  `ins_cnt`      INT           NULL                     COMMENT '기준테이블: INSERT 건수',
-  `sel_cnt`      INT           NULL                     COMMENT '기준테이블: SELECT 건수',
-  `op_dtm`       DATETIME      NOT NULL                 COMMENT '처리일시',
-  PRIMARY KEY (`id`),
-  KEY `idx_run_id`   (`run_id`),
-  KEY `idx_tbl_name` (`tbl_name`(191)),
-  KEY `idx_col_name` (`col_name`(191))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='검색기준테이블 cols 파싱 결과';
-"""
-
-_SQL_INSERT_COLS = """
-INSERT INTO {table}
-  (run_id, db_name, tbl_name, operation, no, source_file,
-   process_yn, process_desc, col_name, col_key,
-   enc_col_cnt, ins_cnt, sel_cnt, op_dtm)
-VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-"""
-
-_DDL_CREATE_QUERY = """
-CREATE TABLE {table} (
-  `id`           BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
-  `run_id`       VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
-  `db_name`      VARCHAR(200)  NULL                     COMMENT '기준테이블: DB명',
-  `tbl_name`     VARCHAR(500)  NOT NULL                 COMMENT '기준테이블: 테이블명',
-  `operation`    VARCHAR(50)   NULL                     COMMENT '기준테이블: 오퍼레이션',
-  `no`           INT           NULL                     COMMENT '기준테이블: 순번',
-  `source_file`  VARCHAR(500)  NULL                     COMMENT '기준테이블: 소스파일 경로',
-  `process_yn`   VARCHAR(1)    NULL                     COMMENT '기준테이블: 처리여부',
-  `process_desc` VARCHAR(500)  NULL                     COMMENT '기준테이블: 처리설명',
-  `query_seq`    INT           NULL                     COMMENT '파일 내 쿼리 순번',
-  `query_text`   LONGTEXT      NULL                     COMMENT '추출된 쿼리 텍스트',
-  `enc_col_cnt`  INT           NULL                     COMMENT '기준테이블: 암호화 칼럼 수',
-  `ins_cnt`      INT           NULL                     COMMENT '기준테이블: INSERT 건수',
-  `sel_cnt`      INT           NULL                     COMMENT '기준테이블: SELECT 건수',
-  `op_dtm`       DATETIME      NOT NULL                 COMMENT '처리일시',
-  PRIMARY KEY (`id`),
-  KEY `idx_run_id`   (`run_id`),
-  KEY `idx_tbl_name` (`tbl_name`(191))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='검색기준테이블 쿼리 추출 결과';
-"""
-
-_SQL_INSERT_QUERY = """
-INSERT INTO {table}
-  (run_id, db_name, tbl_name, operation, no, source_file,
-   process_yn, process_desc, query_seq, query_text,
-   enc_col_cnt, ins_cnt, sel_cnt, op_dtm)
-VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-"""
-
-_DDL_CREATE_MATCH = """
-CREATE TABLE {table} (
-  `id`               BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
-  `run_id`           VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
-  `db_name`          VARCHAR(200)  NULL                     COMMENT '기준테이블: DB명',
-  `tbl_name`         VARCHAR(500)  NOT NULL                 COMMENT '기준테이블: 테이블명',
-  `operation`        VARCHAR(50)   NULL                     COMMENT '기준테이블: 오퍼레이션',
-  `no`               INT           NULL                     COMMENT '기준테이블: 순번',
-  `source_file`      VARCHAR(500)  NULL                     COMMENT '기준테이블: 소스파일 경로',
-  `process_yn`       VARCHAR(1)    NULL                     COMMENT '기준테이블: 처리여부',
-  `process_desc`     VARCHAR(500)  NULL                     COMMENT '기준테이블: 처리설명',
-  `col_name`         VARCHAR(500)  NULL                     COMMENT 'cols 파싱: 칼럼명',
-  `col_key`          VARCHAR(200)  NULL                     COMMENT 'cols 파싱: 키값',
-  `enc_col_cnt`      INT           NULL                     COMMENT '기준테이블: 암호화 칼럼 수',
-  `ins_cnt`          INT           NULL                     COMMENT '기준테이블: INSERT 건수',
-  `sel_cnt`          INT           NULL                     COMMENT '기준테이블: SELECT 건수',
-  `query_seq`        INT           NULL                     COMMENT '매칭 쿼리 순번',
-  `match_type`       VARCHAR(20)   NULL                     COMMENT 'SOURCE / TARGET 구분',
-  `line_number`      INT           NULL                     COMMENT '소스 절대 행번호',
-  `matched_line`     TEXT          NULL                     COMMENT '매칭 라인 텍스트 내용',
-  `vscode_open_cmd`  VARCHAR(1000) NULL                     COMMENT 'VS Code 다이렉트 바로가기 커맨드',
-  `op_dtm`           DATETIME      NOT NULL                 COMMENT '처리일시',
-  PRIMARY KEY (`id`),
-  KEY `idx_run_id`    (`run_id`),
-  KEY `idx_tbl_name`  (`tbl_name`(191)),
-  KEY `idx_col_name`  (`col_name`(191))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='소스/타겟 및 칼럼 매칭 연계 결과';
-"""
-
-_SQL_INSERT_MATCH = """
-INSERT INTO {table}
-  (run_id, db_name, tbl_name, operation, no, source_file,
-   process_yn, process_desc, col_name, col_key, enc_col_cnt, ins_cnt, sel_cnt,
-   query_seq, match_type, line_number, matched_line, vscode_open_cmd, op_dtm)
-VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-"""
-
-_DDL_CREATE_ENC = """
-CREATE TABLE {table} (
-  `id`               BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
-  `run_id`           VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
-  `db_name`          VARCHAR(200)  NULL                     COMMENT '기준테이블: DB명',
-  `tbl_name`         VARCHAR(500)  NOT NULL                 COMMENT '기준테이블: 테이블명',
-  `operation`        VARCHAR(50)   NULL                     COMMENT '기준테이블: 오퍼레이션',
-  `no`               INT           NULL                     COMMENT '기준테이블: 순번',
-  `source_file`      VARCHAR(500)  NULL                     COMMENT '기준테이블: 소스파일 경로',
-  `process_yn`       VARCHAR(1)    NULL                     COMMENT '기준테이블: 처리여부',
-  `process_desc`     VARCHAR(500)  NULL                     COMMENT '기준테이블: 처리설명',
-  `col_name`         VARCHAR(500)  NULL                     COMMENT 'cols 파싱: 칼럼명',
-  `col_key`          VARCHAR(200)  NULL                     COMMENT 'cols 파싱: 원본키값',
-  `enc_code`         VARCHAR(200)  NULL                     COMMENT '코드 변환 맵핑값 (e1~e4)',
-  `enc_col_cnt`      INT           NULL                     COMMENT '기준테이블: 암호화 칼럼 수',
-  `ins_cnt`          INT           NULL                     COMMENT '기준테이블: INSERT 건수',
-  `sel_cnt`          INT           NULL                     COMMENT '기준테이블: SELECT 건수',
-  `query_seq`        INT           NULL                     COMMENT '매칭 쿼리 순번',
-  `match_type`       VARCHAR(20)   NULL                     COMMENT 'SOURCE / TARGET 구분',
-  `line_number`      INT           NULL                     COMMENT '소스 절대 행번호',
-  `matched_line`     TEXT          NULL                     COMMENT '매칭 라인 텍스트 내용',
-  `vscode_open_cmd`  VARCHAR(1000) NULL                     COMMENT 'VS Code 다이렉트 바로가기 커맨드',
-  `op_dtm`           DATETIME      NOT NULL                 COMMENT '처리일시',
-  PRIMARY KEY (`id`),
-  KEY `idx_run_id`    (`run_id`),
-  KEY `idx_tbl_name`  (`tbl_name`(191)),
-  KEY `idx_enc_code`  (`enc_code`(191))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='암호화 코드 키값 맵핑 변환 결과';
-"""
-
-_SQL_INSERT_ENC = """
-INSERT INTO {table}
-  (run_id, db_name, tbl_name, operation, no, source_file,
-   process_yn, process_desc, col_name, col_key, enc_code, enc_col_cnt, ins_cnt, sel_cnt,
-   query_seq, match_type, line_number, matched_line, vscode_open_cmd, op_dtm)
-VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-"""
+def build_ddl_create_enc(table_name: str, valid_base_cols: list) -> str:
+    # 각 칼럼별 타입 선언 사전
+    col_types = {
+        "db_name": "`db_name` VARCHAR(200) NULL COMMENT '기준테이블: DB명'",
+        "tbl_name": "`tbl_name` VARCHAR(500) NOT NULL COMMENT '기준테이블: 테이블명'",
+        "column_name": "`column_name` VARCHAR(500) NULL COMMENT '기준테이블: 컬럼명'",
+        "type_name": "`type_name` VARCHAR(200) NULL COMMENT '기준테이블: 타입명'",
+        "integer_idx": "`integer_idx` VARCHAR(50) NULL COMMENT '기준테이블: 인덱스'",
+        "mig_dec": "`mig_dec` VARCHAR(200) NULL COMMENT '기준테이블: 마이그레이션'",
+        "tobe_enc_key": "`tobe_enc_key` VARCHAR(200) NULL COMMENT '기준테이블: 암호화키'",
+        "tobe_enc_rsn": "`tobe_enc_rsn` VARCHAR(500) NULL COMMENT '기준테이블: 암호화사유'",
+        "asis_enc_yn": "`asis_enc_yn` VARCHAR(1) NULL COMMENT '기준테이블: 암호화여부'",
+        "operation": "`operation` VARCHAR(50) NULL COMMENT '기준테이블: 오퍼레이션'",
+        "no": "`no` INT NULL COMMENT '기준테이블: 순번'",
+        "process_yn": "`process_yn` VARCHAR(1) NULL COMMENT '기준테이블: 처리여부'",
+        "process_desc": "`process_desc` VARCHAR(500) NULL COMMENT '기준테이블: 처리설명'",
+        "enc_col_cnt": "`enc_col_cnt` INT NULL COMMENT '기준테이블: 암호화 칼럼 수'",
+        "ins_cnt": "`ins_cnt` INT NULL COMMENT '기준테이블: INSERT 건수'",
+        "sel_cnt": "`sel_cnt` INT NULL COMMENT '기준테이블: SELECT 건수'",
+    }
+    
+    parts = [
+        "`id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '자동증가 PK'",
+        "`run_id` VARCHAR(30) NOT NULL COMMENT '실행 ID(YYYYMMDD_HHMMSS)'"
+    ]
+    
+    # 존재하는 기준 칼럼만 테이블 구조에 등록
+    for col in valid_base_cols:
+        if col in col_types:
+            parts.append(col_types[col])
+            
+    # 매칭 결과 칼럼 추가
+    parts.extend([
+        "`source_file` VARCHAR(500) NULL COMMENT '소스파일 경로'",
+        "`col_name` VARCHAR(500) NULL COMMENT 'cols 파싱: 칼럼명'",
+        "`enc_code` VARCHAR(200) NULL COMMENT '코드 변환 맵핑값 (e1~e4)'",
+        "`query_seq` INT NULL COMMENT '매칭 쿼리 순번'",
+        "`match_type` VARCHAR(20) NULL COMMENT 'SOURCE / TARGET 구분'",
+        "`line_number` INT NULL COMMENT '소스 절대 행번호'",
+        "`matched_line` TEXT NULL COMMENT '매칭 라인 텍스트 내용'",
+        "`vscode_open_cmd` VARCHAR(1000) NULL COMMENT 'VS Code 다이렉트 바로가기 커맨드'",
+        "`op_dtm` DATETIME NOT NULL COMMENT '처리일시'"
+    ])
+    
+    ddl = "CREATE TABLE %s (\n  %s,\n  PRIMARY KEY (`id`),\n  KEY `idx_run_id` (`run_id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='암호화 코드 키값 맵핑 변환 결과';" % (table_name, ",\n  ".join(parts))
+    return ddl
 
 
-def build_table_names(ref_schema: str, ref_tbl_only: str) -> dict:
-    cols_only  = "%s_%s_cols"  % (PROGRAM_NAME, ref_tbl_only)
-    query_only = "%s_%s_query" % (PROGRAM_NAME, ref_tbl_only)
-    match_only = "%s_%s_match" % (PROGRAM_NAME, ref_tbl_only)
-    enc_only   = "%s_%s_enc"   % (PROGRAM_NAME, ref_tbl_only)
+def build_sql_insert_enc(table_name: str, valid_base_cols: list) -> str:
+    cols = ["run_id"] + valid_base_cols + [
+        "source_file", "col_name", "enc_code",
+        "query_seq", "match_type", "line_number", "matched_line",
+        "vscode_open_cmd", "op_dtm"
+    ]
+    col_list = ", ".join("`%s`" % c for c in cols)
+    val_list = ", ".join(["%s"] * len(cols))
+    sql = "INSERT INTO %s (%s) VALUES (%s)" % (table_name, col_list, val_list)
+    return sql
+
+
+def build_table_names(ref_schema: str, ref_tbl_only: str, mid: str) -> dict:
+    enc_only   = "p190872_%s_%s_enc" % (ref_tbl_only, mid)
     return {
-        "cols_only":  cols_only, "query_only": query_only, "match_only": match_only, "enc_only": enc_only,
-        "cols_fq":    make_fq(ref_schema, cols_only),
-        "query_fq":   make_fq(ref_schema, query_only),
-        "match_fq":   make_fq(ref_schema, match_only),
+        "enc_only":   enc_only,
         "enc_fq":     make_fq(ref_schema, enc_only),
     }
 
@@ -669,12 +510,12 @@ def db_load_table(mysql_conf: dict, fq_table: str, ddl_create: str, sql_insert: 
         cursor = conn.cursor()
         cursor.execute(_DDL_DROP.format(table=fq_table))
         conn.commit()
-        cursor.execute(ddl_create.format(table=fq_table))
+        cursor.execute(ddl_create)
         conn.commit()
         if batch:
-            cursor.executemany(sql_insert.format(table=fq_table), batch)
+            cursor.executemany(sql_insert, batch)
             conn.commit()
-        print("[INFO] DB 적재 완료 [%s]: %s  (%d 건)" % (table_label, fq_table, len(batch)))
+        log_print("[INFO] DB 적재 완료 [%s]: %s  (%d 건)" % (table_label, fq_table, len(batch)))
         return len(batch), None
     except Exception as e:
         if conn:
@@ -707,56 +548,140 @@ def to_int(v):
 
 
 # ============================================================
-# 로컬 소스 파일 캐시 및 검색 관련 유틸리티
+# 로컬 소스 파일 탐색 유틸리티
 # ============================================================
-def build_file_cache(designated_dir: str, mid_values: list) -> dict:
-    cache = {}
-    for mid in mid_values:
-        sub_dir = os.path.join(designated_dir, mid)
-        if not os.path.isdir(sub_dir):
-            print("[WARN] mid 디렉토리가 존재하지 않습니다: %s" % sub_dir)
-            continue
-        for root, dirs, files in os.walk(sub_dir):
-            # Exclude hidden directories, virtualenvs, node_modules etc.
+def find_source_files(designated_dir: str, mid_values: list) -> list:
+    target_extensions = {".sql", ".hql", ".uld", ".ld", ".sh"}
+    found_files = []
+    
+    if mid_values:
+        for mid in mid_values:
+            mid_dir = os.path.join(designated_dir, mid)
+            if not os.path.isdir(mid_dir):
+                log_print("[WARN] 지정한 MID 디렉토리가 존재하지 않습니다: %s" % mid_dir)
+                continue
+            for root, dirs, files in os.walk(mid_dir):
+                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', 'node_modules')]
+                for file in files:
+                    ext = os.path.splitext(file)[1].lower()
+                    if ext in target_extensions:
+                        found_files.append((mid, os.path.join(root, file)))
+    else:
+        default_mid = os.path.basename(os.path.normpath(designated_dir))
+        for root, dirs, files in os.walk(designated_dir):
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('__pycache__', 'node_modules')]
             for file in files:
-                lower_name = file.lower()
-                full_path = os.path.join(root, file)
-                if lower_name not in cache:
-                    cache[lower_name] = []
-                cache[lower_name].append(full_path)
-    return cache
+                ext = os.path.splitext(file)[1].lower()
+                if ext in target_extensions:
+                    rel = os.path.relpath(root, designated_dir)
+                    if rel == ".":
+                        mid = default_mid
+                    else:
+                        parts = rel.split(os.sep)
+                        mid = parts[0]
+                    found_files.append((mid, os.path.join(root, file)))
+                    
+    return found_files
 
 
-def find_best_local_path(src_file: str, local_paths: list) -> str:
-    if not local_paths:
-        return None
-    if len(local_paths) == 1:
-        return local_paths[0]
+# ============================================================
+# 테이블 칼럼 값 동적 추출 지원
+# ============================================================
+def extract_row_cols(row_dict: dict) -> list:
+    col_val = row_dict.get("column_name", "")
+    if not col_val or not col_val.strip():
+        return []
         
-    src_parts = src_file.replace("\\", "/").lower().split("/")
-    src_parts = [p for p in src_parts if p]
-    
-    best_path = local_paths[0]
-    best_score = -1
-    
-    for lp in local_paths:
-        lp_parts = lp.replace("\\", "/").lower().split("/")
-        lp_parts = [p for p in lp_parts if p]
+    if ":" in col_val or "," in col_val:
+        return parse_cols(col_val)
         
-        # Compare from right to left (overlap score)
-        score = 0
-        min_len = min(len(src_parts), len(lp_parts))
-        for i in range(1, min_len + 1):
-            if src_parts[-i] == lp_parts[-i]:
-                score += 1
-            else:
-                break
-        if score > best_score:
-            best_score = score
-            best_path = lp
+    col_key = row_dict.get("tobe_enc_key", "")
+    return [{"col_name": col_val, "col_key": col_key}]
+
+
+# ============================================================
+# 라인 필터링 검사 유틸리티
+# ============================================================
+def check_line_filters(line: str, chk_opt: str) -> bool:
+    if not chk_opt:
+        return True
+    line_lower = line.lower()
+    has_encdec = ("default.encrypt" in line_lower) or ("default.decrypt" in line_lower)
+    
+    if chk_opt == "default":
+        return has_encdec
+    elif chk_opt == "encdec_no":
+        return not has_encdec
+    return True
+
+
+def clean_line(line: str) -> str:
+    # 1. /* ... */ 주석 제거
+    line = re.sub(r"/\*.*?\*/", "", line)
+    # 2. -- 및 # 주석 제거 (문자열 리터럴 내부의 주석 기호는 무시)
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif ch == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif not in_single_quote and not in_double_quote:
+            if ch == '#' or (ch == '-' and i + 1 < len(line) and line[i+1] == '-'):
+                return line[:i]
+        i += 1
+    return line
+
+
+def should_include_matched_line(line: str, c_name: str) -> bool:
+    # 1. 주석 제거 및 공백 트림
+    cleaned = clean_line(line).strip()
+    if not cleaned:
+        return False
+        
+    # 칼럼명이 정제된 라인에 실제로 존재하는지 확인 (대소문자 무시)
+    if not re.search(r"\b%s\b" % re.escape(c_name.strip()), cleaned, re.IGNORECASE):
+        return False
+        
+    # 2. 문자열 리터럴(' 또는 ")이 포함된 경우
+    if "'" in cleaned or '"' in cleaned:
+        return True
+        
+    # 3. 단독 숫자 상수(예: substr의 인덱스 등)가 포함된 경우
+    if re.search(r"\b\d+\b", cleaned):
+        return True
+        
+    # 4. CASE 문 관련 키워드가 포함된 경우
+    cleaned_lower = cleaned.lower()
+    for kw in ["case", "when", "then", "else", "end"]:
+        if re.search(r"\b%s\b" % kw, cleaned_lower):
+            return True
             
-    return best_path
+    # 5. 주요 비교/조건 키워드가 포함된 경우 (단독 컬럼명 비교와 구분)
+    for kw in ["like", "in", "between", "is", "null"]:
+        if re.search(r"\b%s\b" % kw, cleaned_lower):
+            return True
+            
+    # 6. 수학 및 문자열 연산자가 포함된 경우
+    for op in ["+", "/", "||", "%"]:
+        if op in cleaned:
+            return True
+            
+    # 단독 마이너스 연산자 패턴 (- 기호 뒤에 공백이나 숫자가 바로 오는 경우 등)
+    if re.search(r"\s-\s|\b-\d+", cleaned):
+        return True
+        
+    # 7. 함수 호출 패턴 (예: substr(, nvl(, max() 등)이 포함된 경우
+    # SQL 구문 키워드가 함수 형태로 매칭되는 경우는 제외
+    not_functions = {'table', 'into', 'values', 'select', 'insert', 'update', 'delete', 'from', 'where', 'join', 'on', 'and', 'or', 'not', 'in', 'exists'}
+    for m in re.finditer(r"\b([a-zA-Z0-9_.]+)\s*\(", cleaned):
+        func_name = m.group(1).lower()
+        if func_name not in not_functions:
+            return True
+            
+    return False
 
 
 # ============================================================
@@ -769,7 +694,10 @@ def parse_args() -> tuple:
     conf_path      = None
     mid_values     = []
     designated_dir = None
+    where_opt      = None
+    chk_opt        = None
 
+    positionals = []
     i = 0
     while i < len(args):
         if args[i] == "--db":
@@ -782,407 +710,321 @@ def parse_args() -> tuple:
             else:
                 print("[오류] --conf 다음에 mysql.conf 파일 경로를 지정하세요.")
                 sys.exit(1)
-        elif args[i] == "--mid":
-            if i + 1 < len(args):
-                val = args[i + 1]
-                # Split comma-separated values (e.g., aaa,bbb)
-                parts = [p.strip() for p in val.split(",") if p.strip()]
-                mid_values.extend(parts)
+        elif args[i] == "--where":
+            if i + 1 < len(args) and args[i + 1] in ("old", "new"):
+                where_opt = args[i + 1]
                 i += 2
             else:
-                print("[오류] --mid 다음에 값을 지정하세요.")
+                print("[오류] --where 다음에 'old' 또는 'new'를 지정하세요.")
                 sys.exit(1)
-        elif args[i] == "--dir":
-            if i + 1 < len(args):
-                designated_dir = args[i + 1]
+        elif args[i] == "--chk":
+            if i + 1 < len(args) and args[i + 1] in ("default", "encdec_no"):
+                chk_opt = args[i + 1]
                 i += 2
             else:
-                print("[오류] --dir 다음에 디렉토리 경로를 지정하세요.")
+                print("[오류] --chk 다음에 'default' 또는 'encdec_no'를 지정하세요.")
                 sys.exit(1)
+        elif args[i].startswith("--"):
+            print("[오류] 알 수 없는 옵션: %s" % args[i])
+            sys.exit(1)
         else:
-            arg_val = args[i]
-            # If the positional argument is a directory and we haven't assigned designated_dir yet, treat as designated_dir
-            if os.path.isdir(arg_val) and designated_dir is None:
-                designated_dir = arg_val
-            else:
-                if ref_table is None:
-                    ref_table = arg_val
+            positionals.append(args[i])
             i += 1
 
-    if ref_table is None:
-        print("사용법: python3 %s.py <스키마.검색기준테이블> [--db] [--conf mysql.conf 경로] [--mid aaa,bbb] [--dir 디렉토리경로]" % PROGRAM_NAME)
-        print("또는:   python3 %s.py <지정디렉토리> <스키마.검색기준테이블> [--db] [--conf mysql.conf 경로] [--mid aaa,bbb]" % PROGRAM_NAME)
-        print("\n실행 예시:")
-        print("  python3 %s.py midp_db.enc_col_target --mid SID,TMT --dir D:\\source" % PROGRAM_NAME)
-        print("  python3 %s.py D:\\source midp_db.enc_col_target --mid SID,TMT --db" % PROGRAM_NAME)
-        sys.exit(1)
+    if len(positionals) < 2:
+        print("사용법: python3 %s.py <스키마.검색기준테이블> <검색디렉토리> [mid 하위디렉토리�    generated_log_paths = []
+    total_stat_ok = 0
+    total_stat_no_query = 0
+    total_enc_records = 0
+    total_tables_inserted = []
+    total_files_written = []
 
-    if designated_dir:
-        designated_dir = os.path.abspath(designated_dir)
-        if not os.path.isdir(designated_dir):
-            print("[오류] 유효한 디렉토리가 아닙니다: %s" % designated_dir)
-            sys.exit(1)
-    elif mid_values:
-        # Default to current directory if mid is given but dir is not
-        designated_dir = os.path.abspath(os.getcwd())
-
-    return ref_table, use_db, conf_path, mid_values, designated_dir
-
-
-# ============================================================
-# MAIN
-# ============================================================
-def main():
-    ref_table, use_db, conf_path, mid_values, designated_dir = parse_args()
-    op_dtm = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    print("=" * 70)
-    print(" [검색기준테이블 조회 → cols 파싱 + query_text 추출 파일 생성]")
-    print("=" * 70)
-    print("  검색 기준 테이블   : %s" % ref_table)
-    if mid_values:
-        print("  지정 디렉토리      : %s" % designated_dir)
-        print("  MID 파라미터 목록  : %s" % ", ".join(mid_values))
-    print("  처리일시 (op_dtm)  : %s" % op_dtm)
-    print("  실행 ID (run_id)   : %s" % run_id)
-    print("  DB 적재 여부       : %s" % ("YES (--db)" if use_db else "NO (파일만 생성)"))
-    print("-" * 70)
-
-    if _MYSQL_DRIVER is None:
-        print("[ERROR] MySQL 드라이버가 없습니다.")
-        sys.exit(1)
-
-    mysql_conf, err = load_mysql_conf(conf_path)
-    if err:
-        print("[ERROR] %s" % err)
-        sys.exit(1)
-
-    print("[INFO] MySQL 접속 정보")
-    print("  드라이버           : %s" % _MYSQL_DRIVER)
-    print("  호스트             : %s:%s" % (mysql_conf.get("host"), mysql_conf.get("port", 3306)))
-    print("  데이터베이스       : %s" % mysql_conf.get("database"))
-    print("-" * 70)
-
-    print("[INFO] 검색기준테이블 조회 중: %s ..." % ref_table)
-    ref_rows, ref_schema, ref_tbl_only, db_err = load_ref_rows_from_db(mysql_conf, ref_table)
-    if db_err:
-        print("[ERROR] %s" % db_err)
-        sys.exit(1)
-    if not ref_rows:
-        print("[ERROR] 검색기준테이블에서 조회된 데이터가 없습니다.")
-        sys.exit(1)
-
-    print("[INFO] 조회 완료: %d 행" % len(ref_rows))
-    print("-" * 70)
-
-    print("[INFO] 검색기준 cols 목록: 화면출력 생략")
-    print("  " + "-" * 110)
-    for i, ref_row in enumerate(ref_rows, 1):
-        tbl    = ref_row.get("tbl_name", "")
-        cols   = ref_row.get("cols", "")
-        parsed = parse_cols(cols)
-    print("-" * 70)
-
-    # 로컬 소스 파일 캐시 생성 (mid_values가 있는 경우)
-    file_cache = None
-    if mid_values and designated_dir:
-        print("[INFO] 로컬 소스 파일 캐시 생성 중 (디렉토리: %s, MID: %s) ..." % (designated_dir, ", ".join(mid_values)))
-        file_cache = build_file_cache(designated_dir, mid_values)
-        total_cached_files = sum(len(paths) for paths in file_cache.values())
-        print("[INFO] 로컬 소스 파일 캐시 생성 완료: %d 개 고유파일명 (총 파일수: %d 개)" % (len(file_cache), total_cached_files))
-        print("-" * 70)
-
-    tbl_names      = build_table_names(ref_schema, ref_tbl_only)
-    os.makedirs(OUT_DIR, exist_ok=True)
-    csv_cols_path  = os.path.join(OUT_DIR, "%s_cols_v05_test.csv"  % ref_tbl_only)
-    csv_query_path = os.path.join(OUT_DIR, "%s_query_v05_test.csv" % ref_tbl_only)
-    csv_match_path = os.path.join(OUT_DIR, "%s_match_v05_test.csv" % ref_tbl_only)
-    csv_enc_path   = os.path.join(OUT_DIR, "%s_enc_v05_test.csv"   % ref_tbl_only)
-
-    cols_buffer  = []
-    query_buffer = []
-    match_buffer = []
-    enc_buffer   = []
-
-    stat_total      = len(ref_rows)
-    stat_ok, stat_skip, stat_err, stat_no_query = 0, 0, 0, 0
-    error_log       = []
+    # 소스 매칭을 위한 컴파일 패턴 캐시
     compiled_col_patterns = {}
+    
+    # MID 순서대로 탐색 및 화면/텍스트 파일 출력 진행
+    mid_order = mid_values if mid_values else sorted(files_by_mid.keys())
+    
+    # 출력 CSV 헤더 필드 리스트 구성 (유효 기준칼럼 + 매칭 결과 칼럼 - col_key 제외)
+    match_result_headers = [
+        "source_file", "col_name", "enc_code",
+        "query_seq", "match_type", "line_number", "matched_line", "vscode_open_cmd", "op_dtm"
+    ]
+    enc_fieldnames = valid_base_cols + match_result_headers
 
-    print("[INFO] source_file 오픈 및 쿼리 추출 시작 ...")
-
-    for ref_row in ref_rows:
-        src_file = ref_row.get("source_file", "").strip()
-        tbl_name = ref_row.get("tbl_name", "").strip()
-        tbl_up   = tbl_name.upper()
-
-        # 로컬 소스 파일 경로 매핑
-        local_src_file = src_file
-        if file_cache and src_file:
-            basename = os.path.basename(src_file)
-            basename_lower = basename.lower()
-            if basename_lower in file_cache:
-                matched_local = find_best_local_path(src_file, file_cache[basename_lower])
-                if matched_local:
-                    local_src_file = matched_local
-
-        base_ref = {col: ref_row.get(col, "") for col in REF_TABLE_COLS if col != "cols"}
-
-        # ── [파일1 적재] cols 분리 전처리 ──
-        current_row_cols = []
-        col_items = parse_cols(ref_row.get("cols", ""))
-        if col_items:
-            for col_item in col_items:
-                row = dict(base_ref)
-                row["col_name"], row["col_key"] = col_item["col_name"], col_item["col_key"]
-                cols_buffer.append(row)
-                current_row_cols.append(col_item)
-        else:
-            row = dict(base_ref)
-            row["col_name"], row["col_key"] = "", ""
-            cols_buffer.append(row)
-
-        # ── [파일2 추출 및 파일3/파일4 전수 매칭 결합 엔진] ──
-        if not local_src_file:
-            stat_skip += 1
-            msg = "source_file 비어있음 (tbl_name=%s)" % tbl_name
-            error_log.append((src_file, msg))
-            
-            row_q = dict(base_ref); row_q["query_seq"], row_q["query_text"] = None, ""
-            query_buffer.append(row_q)
-            
-            for c_item in (current_row_cols if current_row_cols else [{"col_name": "", "col_key": ""}]):
-                row_m = dict(base_ref)
-                row_m["col_name"], row_m["col_key"] = c_item["col_name"], c_item["col_key"]
-                row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
-                match_buffer.append(row_m)
-                
-                row_e = dict(base_ref)
-                row_e["col_name"], row_e["col_key"] = c_item["col_name"], c_item["col_key"]
-                row_e.update({"enc_code": convert_key_to_code(c_item["col_key"]), "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
-                enc_buffer.append(row_e)
+    for mid in mid_order:
+        files = files_by_mid.get(mid, [])
+        if not files:
             continue
-
-        queries, open_err, orig_lines, raw_content = open_and_extract_queries(local_src_file)
-        if open_err:
-            stat_err += 1
-            error_log.append((local_src_file, open_err))
-            print("  [WARN] %s" % open_err)
             
-            row_q = dict(base_ref); row_q["query_seq"], row_q["query_text"] = None, open_err
-            query_buffer.append(row_q)
-            
-            for c_item in (current_row_cols if current_row_cols else [{"col_name": "", "col_key": ""}]):
-                row_m = dict(base_ref)
-                row_m["col_name"], row_m["col_key"] = c_item["col_name"], c_item["col_key"]
-                row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": open_err, "vscode_open_cmd": ""})
-                match_buffer.append(row_m)
-                
-                row_e = dict(base_ref)
-                row_e["col_name"], row_e["col_key"] = c_item["col_name"], c_item["col_key"]
-                row_e.update({"enc_code": convert_key_to_code(c_item["col_key"]), "query_seq": "", "match_type": "", "line_number": "", "matched_line": open_err, "vscode_open_cmd": ""})
-                enc_buffer.append(row_e)
-            continue
+        # MID별 개별 txt 출력 파일 오픈
+        txt_log_path = os.path.join(OUT_DIR, "p190872_%s_%s_print.txt" % (ref_tbl_only, mid))
+        try:
+            print_file = open(txt_log_path, "w", encoding="utf-8")
+            generated_log_paths.append(txt_log_path)
+        except Exception as e:
+            print("[WARN] MID 로그 텍스트 파일 오픈 실패(%s): %s" % (txt_log_path, str(e)))
+            print_file = None
 
-        raw_content_upper = raw_content.upper()
+        log_print("-" * 80)
+        log_print("-- 검색MID : %s" % mid)
+        log_print("-" * 80)
 
-        if not queries:
-            stat_no_query += 1
-            error_log.append((local_src_file, "쿼리 추출 결과 없음"))
-            
-            row_q = dict(base_ref); row_q["query_seq"], row_q["query_text"] = None, ""
-            query_buffer.append(row_q)
-            
-            for c_item in (current_row_cols if current_row_cols else [{"col_name": "", "col_key": ""}]):
-                row_m = dict(base_ref)
-                row_m["col_name"], row_m["col_key"] = c_item["col_name"], c_item["col_key"]
-                row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
-                match_buffer.append(row_m)
-                
-                row_e = dict(base_ref)
-                row_e["col_name"], row_e["col_key"] = c_item["col_name"], c_item["col_key"]
-                row_e.update({"enc_code": convert_key_to_code(c_item["col_key"]), "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
-                enc_buffer.append(row_e)
-            continue
+        # 이 MID의 결과 및 제외 행을 담을 버퍼
+        mid_enc_buffer = []
+        mid_exclude_buffer = []
 
-        stat_ok += 1
+        # 각 행의 cols/column_name 목록 전처리하여 매칭 준비 (MID마다 독립적으로 상태 트래킹)
+        mid_row_details = []
+        for ref_row in ref_rows:
+            base_ref = {col: ref_row.get(col, "") for col in valid_base_cols}
+            current_row_cols = extract_row_cols(ref_row)
+            mid_row_details.append({
+                "ref_row": ref_row,
+                "base_ref": base_ref,
+                "cols": current_row_cols,
+                "matched_cols_set": set(),
+                "query_count": 0
+            })
         
-        # 파일3용 단건 매칭 여부 추적 사전 구조 구성
-        file3_match_success_map = { (c["col_name"], c["col_key"]): False for c in current_row_cols } if current_row_cols else { ("", ""): False }
-        # 파일4용 다건 매칭 여부 추적 사전 구조 구성
-        file4_match_success_map = { (c["col_name"], c["col_key"]): False for c in current_row_cols } if current_row_cols else { ("", ""): False }
-
-        is_table_in_file = tbl_up in raw_content_upper
-
-        for q_idx, q_item in enumerate(queries, 1):
-            raw_query = q_item["query_text"]
-            query_text_upper = raw_query.upper()
-            line_no_offset = q_item["start_line_no"]
-
-            row_q = dict(base_ref)
-            row_q["query_seq"], row_q["query_text"] = q_idx, raw_query
-            query_buffer.append(row_q)
-
-            if is_table_in_file:
-                if current_row_cols:
-                    for c_item in current_row_cols:
-                        c_name, c_key = c_item["col_name"], c_item["col_key"]
-                        c_up = c_name.strip().upper()
-
-                        # 정규식 캐싱 및 컴파일
-                        rx = compiled_col_patterns.get(c_up)
-                        if rx is None:
-                            try:
-                                rx = re.compile(r"\b%s\b" % re.escape(c_name.strip()), re.IGNORECASE)
-                                compiled_col_patterns[c_up] = rx
-                            except Exception:
-                                pass
-
-                        col_in_query = False
-                        if rx and rx.search(query_text_upper):
-                            col_in_query = True
-
-                        if col_in_query:
-                            # ─── 파일4 전용 다건 전수 라인 추출 프로세스 시작 ───
-                            matched_lines_found = []
-                            if line_no_offset is not None and orig_lines:
-                                start_idx = line_no_offset - 1
-                                for idx in range(start_idx, len(orig_lines)):
-                                    if rx.search(orig_lines[idx]):
-                                        matched_lines_found.append({
-                                            "line_number": idx + 1,
-                                            "matched_line": orig_lines[idx].strip()
-                                        })
-                                    if ";" in orig_lines[idx] and idx > start_idx + 1:
-                                        if (idx - start_idx) >= len(raw_query.splitlines()):
-                                            break
+        for f_path in files:
+            queries, open_err, orig_lines, raw_content = open_and_extract_queries(f_path)
+            if open_err or not queries:
+                continue
+                
+            raw_content_upper = raw_content.upper()
+            
+            for detail in mid_row_details:
+                ref_row = detail["ref_row"]
+                base_ref = detail["base_ref"]
+                row_cols = detail["cols"]
+                
+                tbl_name = ref_row.get("tbl_name", "").strip()
+                tbl_up = tbl_name.upper()
+                
+                if tbl_up in raw_content_upper:
+                    query_seq_counter = 0
+                    for q_item in queries:
+                        raw_query = q_item["query_text"]
+                        query_text_upper = raw_query.upper()
+                        line_no_offset = q_item["start_line_no"]
+                        
+                        if tbl_up in query_text_upper:
+                            query_seq_counter += 1
+                            detail["query_count"] += 1
                             
-                            if not matched_lines_found:
-                                for line in raw_query.splitlines():
-                                    if rx.search(line):
-                                        matched_lines_found.append({
-                                            "line_number": line_no_offset if line_no_offset is not None else "",
-                                            "matched_line": line.strip()
-                                        })
-                                        break
-
-                            # 1) [기존 복원 - 파일3 용] 단건 모수 테이블 매칭 적재 가동
-                            if matched_lines_found and not file3_match_success_map[(c_name, c_key)]:
-                                file3_match_success_map[(c_name, c_key)] = True
-                                first_f = matched_lines_found[0] # 최초 검출된 1건만 취함
-                                l_num_3 = first_f["line_number"]
-                                l_src_3 = first_f["matched_line"]
-                                vsc_cmd_3 = "code -g %s:%s" % (local_src_file, l_num_3) if l_num_3 else "code -g %s" % local_src_file
-
-                                row_m = dict(base_ref)
-                                row_m["col_name"], row_m["col_key"] = c_name, c_key
-                                row_m.update({
-                                    "query_seq": q_idx, "match_type": "MATCHED",
-                                    "line_number": l_num_3, "matched_line": l_src_3, 
-                                    "vscode_open_cmd": vsc_cmd_3
+                            if row_cols:
+                                for col_item in row_cols:
+                                    c_name = col_item["col_name"]
+                                    c_key = col_item.get("col_key", "")
+                                    c_up = c_name.strip().upper()
+                                    
+                                    rx = compiled_col_patterns.get(c_up)
+                                    if rx is None:
+                                        try:
+                                            rx = re.compile(r"\b%s\b" % re.escape(c_name.strip()), re.IGNORECASE)
+                                            compiled_col_patterns[c_up] = rx
+                                        except Exception:
+                                            pass
+                                            
+                                    if rx and rx.search(query_text_upper):
+                                        # 매칭된 전체 라인 및 제외 필터링된 라인 수집
+                                        # 1) 전체 매칭 라인 (주석 포함, 단독 컬럼 포함)
+                                        matched_lines_raw = []
+                                        if line_no_offset is not None and orig_lines:
+                                            start_idx = line_no_offset - 1
+                                            for idx in range(start_idx, len(orig_lines)):
+                                                if rx.search(orig_lines[idx]):
+                                                    matched_lines_raw.append({
+                                                        "line_number": idx + 1,
+                                                        "matched_line": orig_lines[idx].strip()
+                                                    })
+                                                if ";" in orig_lines[idx] and idx > start_idx + 1:
+                                                    if (idx - start_idx) >= len(raw_query.splitlines()):
+                                                        break
+                                        
+                                        if not matched_lines_raw:
+                                            for line in raw_query.splitlines():
+                                                if rx.search(line):
+                                                    matched_lines_raw.append({
+                                                        "line_number": line_no_offset if line_no_offset is not None else "",
+                                                        "matched_line": line.strip()
+                                                    })
+                                                    break
+                                        
+                                        # 2) 매칭 라인들에 필터 적용 (check_line_filters 및 should_include_matched_line)
+                                        for item_raw in matched_lines_raw:
+                                            l_num = item_raw["line_number"]
+                                            l_src = item_raw["matched_line"]
+                                            vsc_cmd = "code -g %s:%s" % (f_path, l_num) if l_num else "code -g %s" % f_path
+                                            
+                                            # 필터 통과 여부 검사
+                                            passed_chk = check_line_filters(l_src, chk_opt)
+                                            passed_include = should_include_matched_line(l_src, c_name)
+                                            
+                                            if passed_chk and passed_include:
+                                                # 추출 성공
+                                                detail["matched_cols_set"].add((c_name, c_key))
+                                                log_print("[매칭] %s (%s)" % (vsc_cmd, c_name))
+                                                log_print("[내용] %s" % l_src)
+                                                log_print("-" * 80)
+                                                
+                                                row_e = dict(base_ref)
+                                                row_e.update({
+                                                    "source_file": f_path,
+                                                    "col_name": c_name,
+                                                    "enc_code": convert_key_to_code(c_key),
+                                                    "query_seq": query_seq_counter,
+                                                    "match_type": "MATCHED",
+                                                    "line_number": l_num,
+                                                    "matched_line": l_src,
+                                                    "vscode_open_cmd": vsc_cmd
+                                                })
+                                                mid_enc_buffer.append(row_e)
+                                            else:
+                                                # 추출 제외된 행 (필터 탈락)
+                                                row_ex = dict(base_ref)
+                                                row_ex.update({
+                                                    "source_file": f_path,
+                                                    "col_name": c_name,
+                                                    "enc_code": convert_key_to_code(c_key),
+                                                    "query_seq": query_seq_counter,
+                                                    "match_type": "EXCLUDED",
+                                                    "line_number": l_num,
+                                                    "matched_line": l_src,
+                                                    "vscode_open_cmd": vsc_cmd
+                                                })
+                                                mid_exclude_buffer.append(row_ex)
+                            else:
+                                # 칼럼명 매칭 생략 (테이블만 일치하면 항상 통과)
+                                detail["matched_cols_set"].add(("", ""))
+                                vsc_cmd = "code -g %s:%s" % (f_path, line_no_offset) if line_no_offset else "code -g %s" % f_path
+                                
+                                log_print("[매칭] %s" % vsc_cmd)
+                                log_print("[내용] (칼럼 매칭 생략)")
+                                log_print("-" * 80)
+                                
+                                row_e = dict(base_ref)
+                                row_e.update({
+                                    "source_file": f_path,
+                                    "col_name": "", "enc_code": "", "query_seq": query_seq_counter, "match_type": "MATCHED",
+                                    "line_number": line_no_offset if line_no_offset is not None else "", "matched_line": "",
+                                    "vscode_open_cmd": vsc_cmd
                                 })
-                                match_buffer.append(row_m)
+                                mid_enc_buffer.append(row_e)
 
-                            # 2) [다건 전수 유지 - 파일4 용] 매칭되는 행 수만큼 루프 돌려 전량 확장 적재
-                            if matched_lines_found:
-                                file4_match_success_map[(c_name, c_key)] = True
-                                for item_f in matched_lines_found:
-                                    l_num_4 = item_f["line_number"]
-                                    l_src_4 = item_f["matched_line"]
-                                    vsc_cmd_4 = "code -g %s:%s" % (local_src_file, l_num_4) if l_num_4 else "code -g %s" % local_src_file
+        # MID별 출력파일 닫기
+        if print_file:
+            print_file.close()
+            print_file = None
 
-                                    row_e = dict(base_ref)
-                                    row_e["col_name"], row_e["col_key"] = c_name, c_key
-                                    row_e.update({
-                                        "enc_code": convert_key_to_code(c_key),
-                                        "query_seq": q_idx, "match_type": "MATCHED",
-                                        "line_number": l_num_4, "matched_line": l_src_4, 
-                                        "vscode_open_cmd": vsc_cmd_4
-                                    })
-                                    enc_buffer.append(row_e)
-                else:
-                    # 칼럼 선언 없는 테이블 매칭 단독 로우 제어
-                    file3_match_success_map[("", "")] = True
-                    file4_match_success_map[("", "")] = True
-                    vsc_cmd = "code -g %s:%s" % (local_src_file, line_no_offset) if line_no_offset else "code -g %s" % local_src_file
+        # 미매칭 구제 (추출 결과가 없는 검색기준 행 트래킹 및 exclude_buffer 추가)
+        mid_stat_ok = 0
+        mid_stat_no_query = 0
+
+        for detail in mid_row_details:
+            base_ref = detail["base_ref"]
+            row_cols = detail["cols"]
+            # 이 MID에서 해당 행이 실제 추출 성공(enc)했거나 필터링(exclude)되었는지 여부 확인
+            matched_set = detail["matched_cols_set"]
+            
+            if detail["query_count"] == 0:
+                mid_stat_no_query += 1
+            else:
+                mid_stat_ok += 1
+                
+            if row_cols:
+                for col_item in row_cols:
+                    c_name = col_item["col_name"]
+                    c_key = col_item.get("col_key", "")
                     
-                    row_m = dict(base_ref)
-                    row_m.update({
-                        "col_name": "", "col_key": "", "query_seq": q_idx, "match_type": "MATCHED",
-                        "line_number": line_no_offset if line_no_offset is not None else "", "matched_line": "",
-                        "vscode_open_cmd": vsc_cmd
-                    })
-                    match_buffer.append(row_m)
-
+                    # enc_buffer와 exclude_buffer 둘 다 매칭 흔적이 없는 기준 행만 UNMATCHED 처리
+                    # 즉, 이 MID에서 전혀 쿼리가 추출되지 않은 경우
+                    has_enc = any(r["col_name"] == c_name and r["match_type"] == "MATCHED" for r in mid_enc_buffer)
+                    has_exc = any(r["col_name"] == c_name and r["match_type"] == "EXCLUDED" for r in mid_exclude_buffer)
+                    
+                    if not has_enc and not has_exc:
+                        row_e = dict(base_ref)
+                        row_e.update({
+                            "source_file": "",
+                            "col_name": c_name,
+                            "enc_code": convert_key_to_code(c_key),
+                            "query_seq": "",
+                            "match_type": "UNMATCHED",
+                            "line_number": "",
+                            "matched_line": "",
+                            "vscode_open_cmd": ""
+                        })
+                        mid_exclude_buffer.append(row_e)
+            else:
+                has_enc = any(r["col_name"] == "" and r["match_type"] == "MATCHED" for r in mid_enc_buffer)
+                if not has_enc:
                     row_e = dict(base_ref)
                     row_e.update({
-                        "col_name": "", "col_key": "", "enc_code": "", "query_seq": q_idx, "match_type": "MATCHED",
-                        "line_number": line_no_offset if line_no_offset is not None else "", "matched_line": "",
-                        "vscode_open_cmd": vsc_cmd
+                        "source_file": "",
+                        "col_name": "", "enc_code": "", "query_seq": "", "match_type": "UNMATCHED", "line_number": "", "matched_line": "", "vscode_open_cmd": ""
                     })
-                    enc_buffer.append(row_e)
+                    mid_exclude_buffer.append(row_e)
 
-        # ── [파일3 미매칭 구제] 모수 행 형태 보존용 공란 적재 ──
-        for (c_name, c_key), is_success in file3_match_success_map.items():
-            if not is_success:
-                row_m = dict(base_ref)
-                row_m["col_name"], row_m["col_key"] = c_name, c_key
-                row_m.update({"query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
-                match_buffer.append(row_m)
+        # 통계 누적
+        total_stat_ok += mid_stat_ok
+        total_stat_no_query += mid_stat_no_query
 
-        # ── [파일4 미매칭 구제] 모수 행 형태 보존용 공란 적재 ──
-        for (c_name, c_key), is_success in file4_match_success_map.items():
-            if not is_success:
-                row_e = dict(base_ref)
-                row_e["col_name"], row_e["col_key"] = c_name, c_key
-                row_e.update({"enc_code": convert_key_to_code(c_key), "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""})
-                enc_buffer.append(row_e)
+        # CSV 파일 및 DB 테이블 생성 (Per MID)
+        mid_csv_enc_path = os.path.join(OUT_DIR, "p190872_%s_%s_enc.csv" % (ref_tbl_only, mid))
+        mid_csv_exc_path = os.path.join(OUT_DIR, "p190872_%s_%s_exclude.csv" % (ref_tbl_only, mid))
 
-    print("[INFO] source_file 처리 완료:")
-    print("  - 전체 ref_row 수  : %8d 건" % stat_total)
-    print("  - 쿼리 추출 성공   : %8d 건" % stat_ok)
-    print("  - source_file 없음 : %8d 건" % stat_skip)
-    print("  - 파일 오픈 오류   : %8d 건" % stat_err)
-    print("  - 쿼리 추출 없음   : %8d 건" % stat_no_query)
-    print("  - 파일1(cols) 행수 : %8d 건" % len(cols_buffer))
-    print("  - 파일2(query) 행수: %8d 건" % len(query_buffer))
-    print("  - 파일3(match) 행수: %8d 건 (모수 기준 단건 롤백 완료)" % len(match_buffer))
-    print("  - 파일4(enc) 행수  : %8d 건 (다건 전수 확장 유지)" % len(enc_buffer))
-    print("-" * 70)
+        # 1) 매칭 성공 결과 (mid_enc_buffer) 저장 및 적재
+        if mid_enc_buffer:
+            save_csv(mid_enc_buffer, mid_csv_enc_path, enc_fieldnames, op_dtm)
+            print("[INFO] [%s] 결과 파일 저장 완료: %s  (%d 건)" % (mid, mid_csv_enc_path, len(mid_enc_buffer)))
+            total_files_written.append(mid_csv_enc_path)
+            total_enc_records += len(mid_enc_buffer)
+            
+            if use_db:
+                mid_tbl_names = build_table_names(ref_schema, ref_tbl_only, mid)
+                ddl_create_enc = build_ddl_create_enc(mid_tbl_names["enc_fq"], valid_base_cols)
+                sql_insert_enc = build_sql_insert_enc(mid_tbl_names["enc_fq"], valid_base_cols)
+                
+                enc_batch = []
+                for r in mid_enc_buffer:
+                    row_vals = [run_id]
+                    for col in valid_base_cols:
+                        val = r.get(col, "")
+                        if col in ("no", "enc_col_cnt", "ins_cnt", "sel_cnt"):
+                            row_vals.append(to_int(val))
+                        else:
+                            row_vals.append(val)
+                    
+                    row_vals.extend([
+                        r.get("source_file", ""),
+                        r.get("col_name", ""),
+                        r.get("enc_code", ""),
+                        to_int(r.get("query_seq", "")),
+                        r.get("match_type", ""),
+                        to_int(r.get("line_number", "")),
+                        r.get("matched_line", ""),
+                        r.get("vscode_open_cmd", ""),
+                        op_dtm
+                    ])
+                    enc_batch.append(tuple(row_vals))
 
-    if error_log:
-        print("[INFO] 처리 오류 / 스킵 목록:")
-        for src, msg in error_log:
-            print("  - [%s]  %s" % (src or "(경로없음)", msg))
-        print("-" * 70)
+                enc_inserted, enc_err = db_load_table(mysql_conf, mid_tbl_names["enc_fq"], ddl_create_enc, sql_insert_enc, enc_batch, "%s 암호화 매칭" % mid)
+                if not enc_err:
+                    total_tables_inserted.append((mid_tbl_names["enc_fq"], enc_inserted))
+                else:
+                    print("[ERROR] [%s] DB 적재 실패: %s" % (mid, enc_err))
+        else:
+            print("[INFO] [%s] 추출행 결과가 없어 결과 파일(enc.csv) 및 DB 테이블 생성을 생략합니다." % mid)
 
-    save_csv(cols_buffer, csv_cols_path, COLS_FIELDNAMES, op_dtm)
-    save_csv(query_buffer, csv_query_path, QUERY_FIELDNAMES, op_dtm)
-    save_csv(match_buffer, csv_match_path, MATCH_FIELDNAMES, op_dtm)
-    save_csv(enc_buffer, csv_enc_path, ENC_FIELDNAMES, op_dtm)
-    print("[INFO] 파일1 저장 완료: %s  (%d 건)" % (csv_cols_path, len(cols_buffer)))
-    print("[INFO] 파일2 저장 완료: %s  (%d 건)" % (csv_query_path, len(query_buffer)))
-    print("[INFO] 파일3 저장 완료: %s  (%d 건)" % (csv_match_path, len(match_buffer)))
-    print("[INFO] 파일4 저장 완료: %s  (%d 건)" % (csv_enc_path, len(enc_buffer)))
-    print("-" * 70)
+        # 2) 추출 제외 결과 (mid_exclude_buffer) 저장
+        if mid_exclude_buffer:
+            save_csv(mid_exclude_buffer, mid_csv_exc_path, enc_fieldnames, op_dtm)
+            print("[INFO] [%s] 제외 결과 파일 저장 완료: %s  (%d 건)" % (mid, mid_csv_exc_path, len(mid_exclude_buffer)))
+            total_files_written.append(mid_csv_exc_path)
+        else:
+            print("[INFO] [%s] 추출 제외 결과가 없어 제외 파일(exclude.csv) 생성을 생략합니다." % mid)
 
-    cols_inserted, query_inserted, match_inserted, enc_inserted = 0, 0, 0, 0
-    cols_err, query_err, match_err, enc_err = None, None, None, None
-
-    if use_db:
-        print("[INFO] DB 적재 시작 ...")
-        cols_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], r["col_name"], r["col_key"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), op_dtm) for r in cols_buffer]
-        cols_inserted, cols_err = db_load_table(mysql_conf, tbl_names["cols_fq"], _DDL_CREATE_COLS, _SQL_INSERT_COLS, cols_batch, "파일1-cols")
-
-        query_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], to_int(r["query_seq"]), r["query_text"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), op_dtm) for r in query_buffer]
-        query_inserted, query_err = db_load_table(mysql_conf, tbl_names["query_fq"], _DDL_CREATE_QUERY, _SQL_INSERT_QUERY, query_batch, "파일2-query")
-
-        match_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], r["col_name"], r["col_key"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), to_int(r["query_seq"]), r["match_type"], to_int(r["line_number"]), r["matched_line"], r["vscode_open_cmd"], op_dtm) for r in match_buffer]
-        match_inserted, match_err = db_load_table(mysql_conf, tbl_names["match_fq"], _DDL_CREATE_MATCH, _SQL_INSERT_MATCH, match_batch, "파일3-match")
-
-        enc_batch = [(run_id, r["db_name"], r["tbl_name"], r["operation"], to_int(r["no"]), r["source_file"], r["process_yn"], r["process_desc"], r["col_name"], r["col_key"], r["enc_code"], to_int(r["enc_col_cnt"]), to_int(r["ins_cnt"]), to_int(r["sel_cnt"]), to_int(r["query_seq"]), r["match_type"], to_int(r["line_number"]), r["matched_line"], r["vscode_open_cmd"], op_dtm) for r in enc_buffer]
-        enc_inserted, enc_err = db_load_table(mysql_conf, tbl_names["enc_fq"], _DDL_CREATE_ENC, _SQL_INSERT_ENC, enc_batch, "파일4-enc")
         print("-" * 70)
 
     print("=" * 70)
@@ -1191,30 +1033,116 @@ def main():
     print("  처리일시             : %s" % op_dtm)
     print("  run_id               : %s" % run_id)
     print("  검색기준 테이블      : %s" % ref_table)
-    print("  ref_row 조회 건수    : %d 행" % stat_total)
-    print("  source_file 성공     : %d 건" % stat_ok)
-    print("  source_file 없음     : %d 건" % stat_skip)
-    print("  파일 오픈 오류       : %d 건" % stat_err)
-    print("  쿼리 추출 없음       : %d 건" % stat_no_query)
+    print("  ref_row 조회 건수    : %d 행" % len(ref_rows))
+    print("  쿼리 매칭 성공       : %d 건" % total_stat_ok)
+    print("  쿼리 추출 없음       : %d 건" % total_stat_no_query)
     print("-" * 70)
-    print("  [파일1] cols 파싱 결과")
-    print("    저장 경로          : %s" % csv_cols_path)
-    print("    레코드 수          : %d 건" % len(cols_buffer))
-    print("  [파일2] query_text 추출 결과")
-    print("    저장 경로          : %s" % csv_query_path)
-    print("    레코드 수          : %d 건" % len(query_buffer))
-    print("  [파일3] 정밀 매칭 분석 결과")
-    print("    저장 경로          : %s" % csv_match_path)
-    print("    레코드 수          : %d 건" % len(match_buffer))
-    print("  [파일4] 코드 변환 매칭 결과")
-    print("    저장 경로          : %s" % csv_enc_path)
-    print("    레코드 수          : %d 건" % len(enc_buffer))
+    print("  [결과 파일] 코드 변환 매칭/제외 CSV 파일 생성완료")
+    for f_path in total_files_written:
+        print("    저장 경로          : %s" % f_path)
+    print("  [로그 파일] MID별 화면 출력 로그 txt 파일 생성완료")
+    for log_path in generated_log_paths:
+        print("    저장 경로          : %s" % log_path)
     print("-" * 70)
     if use_db:
-        print("  [파일1] DB 테이블    : %s (적재: %d건)" % (tbl_names["cols_fq"], cols_inserted)) if not cols_err else print("  [파일1] DB 적재      : 실패 (%s)" % cols_err)
-        print("  [파일2] DB 테이블    : %s (적재: %d건)" % (tbl_names["query_fq"], query_inserted)) if not query_err else print("  [파일2] DB 적재      : 실패 (%s)" % query_err)
-        print("  [파일3] DB 테이블    : %s (적재: %d건)" % (tbl_names["match_fq"], match_inserted)) if not match_err else print("  [파일3] DB 적재      : 실패 (%s)" % match_err)
-        print("  [파일4] DB 테이블    : %s (적재: %d건)" % (tbl_names["enc_fq"], enc_inserted)) if not enc_err else print("  [파일4] DB 적재      : 실패 (%s)" % enc_err)
+        print("  [결과 DB] DB 테이블 적재 완료")
+        for fq_tbl, count in total_tables_inserted:
+            print("    테이블명           : %s (적재: %d건)" % (fq_tbl, count))
+        if not total_tables_inserted:
+            print("    적재된 테이블 없음 (추출 결과 없음)")
+    else:
+        print("  DB 적재              : 생략 (--db 옵션 미지정)")
+    print("=" * 70)
+    print("[INFO] 모든 공정이 정상 처리 완료되었습니다.\n") not in matched_set:
+                    row_e = dict(base_ref)
+                    row_e["col_name"] = c_name
+                    row_e["col_key"] = c_key
+                    row_e.update({
+                        "enc_code": convert_key_to_code(c_key),
+                        "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""
+                    })
+                    enc_buffer.append(row_e)
+        else:
+            if ("", "") not in matched_set:
+                row_e = dict(base_ref)
+                row_e.update({
+                    "col_name": "", "col_key": "", "enc_code": "", "query_seq": "", "match_type": "", "line_number": "", "matched_line": "", "vscode_open_cmd": ""
+                })
+                enc_buffer.append(row_e)
+
+    # 출력 CSV 헤더 필드 리스트 구성 (유효 기준칼럼 + 매칭 결과 칼럼)
+    match_result_headers = [
+        "source_file", "col_name", "col_key", "enc_code",
+        "query_seq", "match_type", "line_number", "matched_line", "vscode_open_cmd", "op_dtm"
+    ]
+    enc_fieldnames = valid_base_cols + match_result_headers
+
+    print("[INFO] source_file 처리 완료:")
+    print("  - 전체 ref_row 수  : %8d 건" % len(ref_rows))
+    print("  - 쿼리 매칭 성공   : %8d 건" % stat_ok)
+    print("  - 쿼리 추출 없음   : %8d 건" % stat_no_query)
+    print("  - 결과(enc) 행수   : %8d 건 (다건 전수 확장 유지)" % len(enc_buffer))
+    print("-" * 70)
+
+    save_csv(enc_buffer, csv_enc_path, enc_fieldnames, op_dtm)
+    print("[INFO] 결과 파일 저장 완료: %s  (%d 건)" % (csv_enc_path, len(enc_buffer)))
+    print("-" * 70)
+
+    enc_inserted = 0
+    enc_err = None
+
+    if use_db:
+        print("[INFO] DB 적재 시작 ...")
+        
+        ddl_create_enc = build_ddl_create_enc(tbl_names["enc_fq"], valid_base_cols)
+        sql_insert_enc = build_sql_insert_enc(tbl_names["enc_fq"], valid_base_cols)
+        
+        enc_batch = []
+        for r in enc_buffer:
+            row_vals = [run_id]
+            for col in valid_base_cols:
+                val = r.get(col, "")
+                if col in ("no", "enc_col_cnt", "ins_cnt", "sel_cnt"):
+                    row_vals.append(to_int(val))
+                else:
+                    row_vals.append(val)
+            
+            row_vals.extend([
+                r.get("source_file", ""),
+                r.get("col_name", ""),
+                r.get("col_key", ""),
+                r.get("enc_code", ""),
+                to_int(r.get("query_seq", "")),
+                r.get("match_type", ""),
+                to_int(r.get("line_number", "")),
+                r.get("matched_line", ""),
+                r.get("vscode_open_cmd", ""),
+                op_dtm
+            ])
+            enc_batch.append(tuple(row_vals))
+
+        enc_inserted, enc_err = db_load_table(mysql_conf, tbl_names["enc_fq"], ddl_create_enc, sql_insert_enc, enc_batch, "암호화 매칭")
+        print("-" * 70)
+
+    print("=" * 70)
+    print(" 처리 완료 요약")
+    print("=" * 70)
+    print("  처리일시             : %s" % op_dtm)
+    print("  run_id               : %s" % run_id)
+    print("  검색기준 테이블      : %s" % ref_table)
+    print("  ref_row 조회 건수    : %d 행" % len(ref_rows))
+    print("  쿼리 매칭 성공       : %d 건" % stat_ok)
+    print("  쿼리 추출 없음       : %d 건" % stat_no_query)
+    print("-" * 70)
+    print("  [결과 파일] 코드 변환 매칭 결과")
+    print("    저장 경로          : %s" % csv_enc_path)
+    print("    레코드 수          : %d 건" % len(enc_buffer))
+    print("  [로그 파일] MID별 화면 출력 로그 txt 파일 생성완료")
+    for log_path in generated_log_paths:
+        print("    저장 경로          : %s" % log_path)
+    print("-" * 70)
+    if use_db:
+        print("  [결과 DB] DB 테이블  : %s (적재: %d건)" % (tbl_names["enc_fq"], enc_inserted)) if not enc_err else print("  [결과 DB] DB 적재    : 실패 (%s)" % enc_err)
     else:
         print("  DB 적재              : 생략 (--db 옵션 미지정)")
     print("=" * 70)
