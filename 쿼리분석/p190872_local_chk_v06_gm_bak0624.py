@@ -628,12 +628,6 @@ def main():
         included_results = []
         seen_matches = set() # (filepath, l_num, col_lower) 중복 매칭 방지
 
-        # 집계용 변수 초기화
-        total_files_scanned = len(files)
-        files_with_matches = set()
-        match_line_count = 0
-        exclude_line_count = 0
-
         for filepath in files:
             queries, open_err, orig_lines, raw_content = open_and_extract_queries(filepath)
             if open_err:
@@ -690,15 +684,9 @@ def main():
                             # Omit pure column references
                             orig_col_name = col_to_rows[col_lower][0]["column_name"]
                             vscode_cmd = "code -g %s:%s" % (os.path.abspath(filepath), l_num)
-                            
-                            # 관련 테이블명 가져오기
-                            assoc_tables = sorted(list({r.get("tbl_name") for r in col_to_rows[col_lower] if r.get("tbl_name")}))
-                            assoc_tables_str = ", ".join(assoc_tables)
-
                             if is_pure_column(clean_l_val, orig_col_name):
-                                exclude_line_count += 1
                                 # 4차수정요청: 포함예시 이외행(순수 칼럼 참조 등)을 제외 텍스트로 축적
-                                exclude_str = "[제외] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
+                                exclude_str = "[제외] %s %s" % (vscode_cmd, orig_col_name)
                                 content_str = "[내용] %s" % l_val.strip()
                                 mid_exclude_buffer.append(exclude_str)
                                 mid_exclude_buffer.append(content_str)
@@ -716,8 +704,6 @@ def main():
 
                             # Generate matching rows
                             if is_included:
-                                files_with_matches.add(filepath)
-                                match_line_count += 1
                                 for ref_row in col_to_rows[col_lower]:
                                     result_row = dict(ref_row)
                                     result_row.update({
@@ -731,7 +717,7 @@ def main():
                                     included_results.append(result_row)
                                     
                                 # Output formatting for stdout and print buffer
-                                match_str = "[매칭] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
+                                match_str = "[매칭] %s %s" % (vscode_cmd, orig_col_name)
                                 content_str = "[내용] %s" % l_val.strip()
                                 
                                 print(match_str)
@@ -742,23 +728,24 @@ def main():
                                 mid_print_buffer.append(content_str)
                                 mid_print_buffer.append("-" * 80)
                             else:
-                                exclude_line_count += 1
                                 # --chk 옵션에 의해 제외된 행도 제외 텍스트로 축적
-                                exclude_str = "[제외] %s %s (테이블: %s, CHK필터제외)" % (vscode_cmd, orig_col_name, assoc_tables_str)
+                                exclude_str = "[제외] %s %s (CHK필터제외)" % (vscode_cmd, orig_col_name)
                                 content_str = "[내용] %s" % l_val.strip()
                                 mid_exclude_buffer.append(exclude_str)
                                 mid_exclude_buffer.append(content_str)
                                 mid_exclude_buffer.append("-" * 80)
 
-        # Define paths
-        csv_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s.csv" % (ref_tbl_only, out_suffix)))
-        print_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_print.txt" % (ref_tbl_only, out_suffix)))
-        ex_txt_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_exclude.txt" % (ref_tbl_only, out_suffix)))
-
         # Output file generation per MID if results are present
         if included_results:
+            csv_path = os.path.join(out_dir, "p190872_%s_%s.csv" % (ref_tbl_only, out_suffix))
             save_csv(included_results, csv_path, CSV_FIELDNAMES, op_dtm)
             print("[INFO] 파일 저장 완료: %s  (%d 건)" % (csv_path, len(included_results)))
+
+            # Save the screen prints
+            print_path = os.path.join(out_dir, "p190872_%s_%s_print.txt" % (ref_tbl_only, out_suffix))
+            with open(print_path, "w", encoding="utf-8") as pf:
+                pf.write("\n".join(mid_print_buffer) + "\n")
+            print("[INFO] 화면출력내용 파일 생성 완료: %s" % print_path)
 
             if args.db:
                 fq_out_table = build_output_table_name(ref_schema, ref_tbl_only, out_suffix)
@@ -789,54 +776,10 @@ def main():
 
         # Exclude file generation per MID if excluded results are present
         if len(mid_exclude_buffer) > 3:
+            ex_txt_path = os.path.join(out_dir, "p190872_%s_%s_exclude.txt" % (ref_tbl_only, out_suffix))
             with open(ex_txt_path, "w", encoding="utf-8") as ef:
                 ef.write("\n".join(mid_exclude_buffer) + "\n")
             print("[INFO] 제외행 내용 파일 생성 완료: %s" % ex_txt_path)
-
-        # ─────────────────────────────────────────────────────────────
-        # MID별 실행 결과 상세 요약 화면 출력 및 저장 (7차 수정요청)
-        # ─────────────────────────────────────────────────────────────
-        summary_lines = []
-        summary_lines.append("=" * 80)
-        summary_lines.append(" [분석 완료 요약 - MID: %s]" % mid)
-        summary_lines.append("=" * 80)
-        summary_lines.append("  - 검색 대상 기준 테이블   : %s" % args.ref_table)
-        summary_lines.append("  - 검색 대상 소스 파일 수   : %d 개" % total_files_scanned)
-        summary_lines.append("  - 매칭 발생 소스 파일 수   : %d 개" % len(files_with_matches))
-        summary_lines.append("  - 매칭 건수 (포함)          : %d 건" % match_line_count)
-        summary_lines.append("  - 매칭 건수 (제외)          : %d 건" % exclude_line_count)
-        summary_lines.append("-" * 80)
-        summary_lines.append("  1. 생성 파일 정보")
-        if included_results:
-            summary_lines.append("     - 결과 CSV 파일   : %s (%d 건)" % (csv_path, len(included_results)))
-            summary_lines.append("     - 화면 출력 파일  : %s (%d 건)" % (print_path, match_line_count))
-        else:
-            summary_lines.append("     - 결과 CSV 파일   : (생성 없음)")
-            summary_lines.append("     - 화면 출력 파일  : (생성 없음)")
-            
-        if len(mid_exclude_buffer) > 3:
-            summary_lines.append("     - 제외 로그 파일  : %s (%d 건)" % (ex_txt_path, exclude_line_count))
-        else:
-            summary_lines.append("     - 제외 로그 파일  : (생성 없음)")
-            
-        summary_lines.append("  2. DB 적재 정보")
-        if args.db and included_results:
-            fq_out_table = build_output_table_name(ref_schema, ref_tbl_only, out_suffix)
-            summary_lines.append("     - 결과 DB 테이블  : %s (%d 건)" % (fq_out_table, len(included_results)))
-        else:
-            summary_lines.append("     - 결과 DB 테이블  : (적재 없음)")
-        summary_lines.append("=" * 80)
-
-        # Print to screen
-        for line in summary_lines:
-            print(line)
-
-        # Append to print buffer and save print log file
-        mid_print_buffer.extend(summary_lines)
-        if included_results:
-            with open(print_path, "w", encoding="utf-8") as pf:
-                pf.write("\n".join(mid_print_buffer) + "\n")
-            print("[INFO] 화면출력내용 파일 생성 완료: %s" % print_path)
 
     print("=" * 80)
     print(" [매칭 분석 공정 완료]")

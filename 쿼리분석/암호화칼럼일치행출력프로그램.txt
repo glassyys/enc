@@ -132,3 +132,6 @@ db_name,tbl_name,column_name,type_name,integer_idx,mig_dec,tobe_enc_key,tobe_enc
 --6차수정요청
 이전 수정요청은 5차수정요청으로하고
 추가로 요청할 것은 파일명과 테이블명에 --where 과 --chk 파라미터로 입력한값을 추가해서 생성하도록 수정
+
+--7차수정요청
+화면출력에 파일명과 테이블명과 건수정보 상세출력하도록 수정요청
