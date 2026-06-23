@@ -64,5 +64,16 @@ col_bb:key2 이면 'e2'값 사용으로 key2 값의 숫자기준입니다.
 3) 기존코드의 칼럼명을 "col_01:k1,col_bb:k2" 의  col_01 이나 col_bb과 일치하는 경우 변환처리
 
 
+D:\workspace\enc\쿼리분석\p190872_local_chk_v05_gm.py
 
-
+위 소스에 대해
+아래 테이블명을 코드들을 
+    cols_only  = "%s_%s_cols"  % (PROGRAM_NAME, ref_tbl_only)
+    query_only = "%s_%s_query" % (PROGRAM_NAME, ref_tbl_only)
+    match_only = "%s_%s_match" % (PROGRAM_NAME, ref_tbl_only)
+    enc_only   = "%s_%s_enc"   % (PROGRAM_NAME, ref_tbl_only)
+	
+	tb_add_gbn 값 을 p190872_local_chk_v05_gm.py 중 "v05" 값으로 처리후 아래와 같은 형식으로 변경해서 소스 수정요청합니다
+	
+    cols_only  = "%s_cols_%s"  % (ref_tbl_only, tb_add_gbn)
+	나머지 로직은 유지입니다.
