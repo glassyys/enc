@@ -734,9 +734,9 @@ def main():
                                 match_str = "[매칭] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
                                 content_str = "[내용] %s" % l_val.strip()
                                 
-                                print(match_str)
-                                print(content_str)
-                                print("-" * 80)
+                                # print(match_str)
+                                # print(content_str)
+                                # print("-" * 80)
                                 
                                 mid_print_buffer.append(match_str)
                                 mid_print_buffer.append(content_str)
