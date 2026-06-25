@@ -295,87 +295,59 @@ def convert_key_to_code(col_key: str) -> str:
 # ============================================================
 # default 분리 CSV 파일 검증 함수
 # ============================================================
-def verify_default_csv(input_csv: str, output_csv: str) -> tuple:
+def verify_default_results(results: list) -> tuple:
     """
-    default 분리 CSV 파일을 읽고, 각 라인(행)마다 다음을 검증한다:
+    default 결과 리스트의 각 행마다 다음을 검증한다:
     - column_name값, 'default.decrypt'(또는 'default.encrypt'), 그리고
       tobe_enc_key 값을 e1/e2/e3/e4 등으로 컨버전한 값이 matched_line에 동시에 존재
-    모두 만족하면 'OK', 아니면 'NOK'로 처리하여 결과 파일(output_csv) 생성.
+    각 행에 'chk_result' ('OK' 또는 'NOK')를 부여하고, 통계(total, ok, nok)를 반환하며
+    NOK인 경우 화면에 상세 출력한다.
     """
-    if not os.path.exists(input_csv):
-        return 0, 0, 0
-    
-    verified_rows = []
     ok_cnt = 0
     nok_cnt = 0
     
-    try:
-        with open(input_csv, "r", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames if reader.fieldnames else []
-            for row in reader:
-                col_name = row.get("column_name", "").strip()
-                tobe_enc_key = row.get("tobe_enc_key", "").strip()
-                matched_line = row.get("matched_line", "").strip()
-                
-                # Key conversion
-                chk_key = convert_key_to_code(tobe_enc_key)
-                
-                line_lower = matched_line.lower()
-                col_lower = col_name.lower()
-                key_lower = chk_key.lower()
-                
-                # 검증 조건:
-                # case1) column_name, default.encrypt, converted key 모두 존재 시 OK
-                # case2) column_name, default.decrypt 존재하고, converted key는 없을 시 OK
-                # case3) column_name, default.encrypt, default.decrypt 모두 존재 시 (key 여부 상관없이) OK
-                # 그 외 NOK
-                has_col = col_lower in line_lower if col_lower else False
-                has_encrypt = "default.encrypt" in line_lower
-                has_decrypt = "default.decrypt" in line_lower
-                has_key = key_lower in line_lower if key_lower else False
-                
-                is_ok = False
-                if has_col:
-                    if has_encrypt and has_decrypt:
-                        is_ok = True
-                    elif has_encrypt and has_key:
-                        is_ok = True
-                    elif has_decrypt and not has_key:
-                        is_ok = True
-                
-                if is_ok:
-                    row_chk_result = "OK"
-                    ok_cnt += 1
-                else:
-                    row_chk_result = "NOK"
-                    nok_cnt += 1
-                    # NOK 발생 시 화면 출력
-                    print("[NOK] mid=%s, column_name=%s, source_file=%s, line_number=%s, matched_line=%s, vscode_open_cmd=%s, chk_result=NOK" % 
-                          (row.get("mid", "").strip(), 
-                           col_name, 
-                           row.get("source_file", "").strip(), 
-                           row.get("line_number", "").strip(), 
-                           matched_line, 
-                           row.get("vscode_open_cmd", "").strip()))
-                
-                new_row = dict(row)
-                new_row["chk_result"] = row_chk_result
-                verified_rows.append(new_row)
-                
-        # Write to output CSV
-        if verified_rows:
-            val_fieldnames = fieldnames + ["chk_result"] if "chk_result" not in fieldnames else fieldnames
-            with open(output_csv, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.DictWriter(f, fieldnames=val_fieldnames, extrasaction="ignore")
-                writer.writeheader()
-                for r in verified_rows:
-                    writer.writerow(r)
-    except Exception as e:
-        print("[WARN] 검증 파일 처리 중 오류 발생: %s" % str(e))
-        return 0, 0, 0
-                
-    return len(verified_rows), ok_cnt, nok_cnt
+    for row in results:
+        col_name = row.get("column_name", "").strip()
+        tobe_enc_key = row.get("tobe_enc_key", "").strip()
+        matched_line = row.get("matched_line", "").strip()
+        
+        # Key conversion
+        chk_key = convert_key_to_code(tobe_enc_key)
+        
+        line_lower = matched_line.lower()
+        col_lower = col_name.lower()
+        key_lower = chk_key.lower()
+        
+        has_col = col_lower in line_lower if col_lower else False
+        has_encrypt = "default.encrypt" in line_lower
+        has_decrypt = "default.decrypt" in line_lower
+        has_key = key_lower in line_lower if key_lower else False
+        
+        is_ok = False
+        if has_col:
+            if has_encrypt and has_decrypt:
+                is_ok = True
+            elif has_encrypt and has_key:
+                is_ok = True
+            elif has_decrypt and not has_key:
+                is_ok = True
+        
+        if is_ok:
+            row["chk_result"] = "OK"
+            ok_cnt += 1
+        else:
+            row["chk_result"] = "NOK"
+            nok_cnt += 1
+            # NOK 발생 시 화면 출력
+            print("[NOK] mid=%s, column_name=%s, source_file=%s, line_number=%s, matched_line=%s, vscode_open_cmd=%s, chk_result=NOK" % 
+                  (row.get("mid", "").strip(), 
+                   col_name, 
+                   row.get("source_file", "").strip(), 
+                   str(row.get("line_number", "")).strip(), 
+                   matched_line, 
+                   row.get("vscode_open_cmd", "").strip()))
+                   
+    return len(results), ok_cnt, nok_cnt
 
 # ============================================================
 # 쿼리 단위 추출
@@ -650,6 +622,7 @@ CREATE TABLE IF NOT EXISTS {table} (
   `matched_line`     TEXT          NULL,
   `vscode_open_cmd`  VARCHAR(1000) NULL,
   `query_text`       LONGTEXT      NULL,
+  `chk_result`       VARCHAR(10)   NULL                     COMMENT '암호화 검증 결과(OK/NOK)',
   `op_dtm`           DATETIME      NOT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_run_id`    (`run_id`),
@@ -663,9 +636,9 @@ _SQL_INSERT_RESULT = """
 INSERT INTO {table}
   (run_id, mid, db_name, tbl_name, column_name, type_name, integer_idx,
    mig_dec, tobe_enc_key, tobe_enc_rsn, asis_enc_yn,
-   source_file, line_number, matched_line, vscode_open_cmd, query_text, op_dtm)
+   source_file, line_number, matched_line, vscode_open_cmd, query_text, chk_result, op_dtm)
 VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 def db_load_table(mysql_conf: dict, fq_table: str, ddl_create: str, sql_insert: str, batch: list, mid: str, table_label: str) -> tuple:
@@ -738,6 +711,7 @@ def build_db_batch(results: list, run_id: str, mid: str, op_dtm: str) -> list:
             r.get("matched_line"),
             r.get("vscode_open_cmd"),
             r.get("query_text"),  # DB 적재 시 query_text 보존
+            r.get("chk_result", ""), # chk_result 추가
             op_dtm
         )
         for r in results
@@ -880,7 +854,6 @@ def main():
         
         # 검증 통계용 초기화
         total_val, ok_val, nok_val = 0, 0, 0
-        csv_path_default_chk = ""
 
         for filepath in files:
             queries, open_err, orig_lines, raw_content = open_and_extract_queries(filepath)
@@ -1043,6 +1016,9 @@ def main():
                     results_default.append(r)
                 else:
                     results_encdec_no.append(r)
+            
+            # v08_gm: default 결과 리스트 검증 수행 및 chk_result 필드 주입
+            total_val, ok_val, nok_val = verify_default_results(results_default)
 
         # Output file generation per MID if results are present
         if included_results:
@@ -1054,17 +1030,12 @@ def main():
                 csv_path_default = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_default.csv" % (ref_tbl_only, out_suffix)))
                 csv_path_encdec_no = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_encdec_no.csv" % (ref_tbl_only, out_suffix)))
                 
-                save_csv(results_default, csv_path_default, CSV_FIELDNAMES, op_dtm)
-                print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건)" % (csv_path_default, len(results_default)))
+                # default 분리 CSV는 chk_result 필드를 포함하여 저장
+                save_csv(results_default, csv_path_default, CSV_FIELDNAMES + ["chk_result"], op_dtm)
+                print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
                 
                 save_csv(results_encdec_no, csv_path_encdec_no, CSV_FIELDNAMES, op_dtm)
                 print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
-                
-                # v08_gm: default 분리 CSV 파일에 대한 정상 암호화/복호화 적용 여부 검증 수행
-                csv_path_default_chk = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_default_chk.csv" % (ref_tbl_only, out_suffix)))
-                total_val, ok_val, nok_val = verify_default_csv(csv_path_default, csv_path_default_chk)
-                if total_val > 0:
-                    print("[INFO] [검증완료] 파일 저장 완료: %s  (%d 건 - OK: %d, NOK: %d)" % (csv_path_default_chk, total_val, ok_val, nok_val))
         else:
             print("[INFO] '%s' MID에 대해 추출된 매칭 결과 행이 없습니다. (결과 파일 미생성)" % mid)
 
@@ -1115,9 +1086,10 @@ def main():
         if included_results:
             summary_lines.append("     - 결과 CSV 파일   : %s (%d 건)" % (csv_path, len(included_results)))
             if args.chk == "all":
-                summary_lines.append("     - default 분리 CSV : %s (%d 건)" % (csv_path_default, len(results_default)))
                 if total_val > 0:
-                    summary_lines.append("     - default 검증 CSV : %s (%d 건 - OK: %d, NOK: %d)" % (csv_path_default_chk, total_val, ok_val, nok_val))
+                    summary_lines.append("     - default 분리 CSV : %s (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
+                else:
+                    summary_lines.append("     - default 분리 CSV : %s (%d 건)" % (csv_path_default, len(results_default)))
                 summary_lines.append("     - encdec_no 분리   : %s (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
             summary_lines.append("     - 화면 출력 파일  : %s (%d 건)" % (print_path, match_line_count))
         else:
