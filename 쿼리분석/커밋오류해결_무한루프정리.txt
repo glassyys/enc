@@ -1,0 +1,50 @@
+PS D:\workspace\enc> .\git_reset.bat
+'git_reset.bat' 프로그램을 실행하지 못했습니다. 지정된 파일을 찾을 수 없습니다위치 줄:1 문자:1
++ .\git_reset.bat
++ ~~~~~~~~~~~~~~~.
+위치 줄:1 문자:1
++ .\git_reset.bat
++ ~~~~~~~~~~~~~~~
+    + CategoryInfo          : ResourceUnavailable: (:) [], ApplicationFailedException
+    + FullyQualifiedErrorId : NativeCommandFailed
+	
+배치 파일(git_reset.bat)을 실행할 때 시스템 환경 설정이나 권한 때문에 CMD 창이 실행되지 않아 오류가 발생한 것 같습니다.
+
+배치 파일 대신, 사용 중이신 PowerShell 터미널 창에 아래 명령어들을 한 줄씩 복사해서 직접 실행해 주세요.
+
+PowerShell 전용 명령어
+1단계: 백그라운드 Git 프로세스 강제 종료
+powershell
+Stop-Process -Name "git" -Force -ErrorAction SilentlyContinue
+(위 명령어를 입력해도 화면에 아무 메시지가 나오지 않는 것이 정상입니다. 프로세스가 정상 종료된 것입니다.)
+
+2단계: Git 락 파일 제거
+powershell
+Remove-Item -Path ".git\index.lock" -Force -ErrorAction SilentlyContinue
+(락 파일이 없는 경우에도 오류 없이 넘어갑니다.)
+
+3단계: Git 상태 확인
+powershell
+git status
+(위 명령어를 입력한 뒤 정상적으로 파일 변경 사항 목록이 출력되는지 확인해 주세요.)
+
+작업 요약
+배치 파일 실행이 제한되는 환경이므로, PowerShell에서 직접 입력하여 실행할 수 있는 명령어로 대체하여 안내해 드렸습니다. 이 단계들을 실행하면 도넛 모양 로딩이 사라질 것입니다.
+오전 3:26
+오전 3:29
+git status 명령어가 아주 빠르게 잘 실행된 것으로 보아, 백그라운드에서 멈춰 있던 Git 프로세스가 성공적으로 종료되었습니다!
+
+이제 VS Code의 소스 제어(Source Control) 창의 도넛 모양 로딩 애니메이션이 멈추었을 것입니다.
+
+최종 마무리 단계
+로딩 확인:
+
+만약 여전히 로딩 아이콘이 돌고 있다면, 소스 제어 패널 우측 상단의 **새로고침(동그란 화살표 아이콘)**을 클릭하거나 VS Code를 한 번만 재시작해 주시면 완전히 정상화됩니다.
+임시 파일 정리:
+
+이제 사용을 마친 임시 파일 git_reset.bat을 삭제하여 프로젝트를 깔끔하게 유지할 수 있습니다. 터미널에 다음 명령어를 실행하여 삭제해 주세요.
+powershell
+Remove-Item git_reset.bat
+작업 요약
+백그라운드 Git 프로세스를 강제 종료하여 무한 로딩(스피너) 현상을 해결하였습니다.
+git status를 수동 확인하여 Git이 정상 동작함을 검증하였고, 임시 생성 파일에 대한 정리 명령어를 안내하였습니다.
