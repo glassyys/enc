@@ -325,15 +325,12 @@ def verify_default_results(results: list) -> tuple:
         
         is_ok = False
         if has_col:
-            # Case 3: default.encrypt와 default.decrypt가 둘 다 존재하는 경우 (key 존재 무관 OK)
-            if has_encrypt and has_decrypt:
-                is_ok = True
-            # Case 1: default.encrypt는 있고 default.decrypt는 없는 경우 (key가 있어야 OK, 없으면 NOK)
-            elif has_encrypt and not has_decrypt:
+            # Case 1: default.encrypt가 포함된 경우 (encrypt/decrypt 동시 존재 포함): 반드시 key가 존재해야 OK
+            if has_encrypt:
                 if has_key:
                     is_ok = True
-            # Case 2: default.decrypt는 있고 default.encrypt는 없는 경우 (key가 없어야 OK, 있으면 NOK)
-            elif has_decrypt and not has_encrypt:
+            # Case 2: default.decrypt만 포함되고 default.encrypt는 없는 경우: key가 존재하지 않아야 OK
+            elif has_decrypt:
                 if not has_key:
                     is_ok = True
         
