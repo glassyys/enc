@@ -627,6 +627,34 @@ CREATE TABLE IF NOT EXISTS {table} (
   `matched_line`     TEXT          NULL,
   `vscode_open_cmd`  VARCHAR(1000) NULL,
   `query_text`       LONGTEXT      NULL,
+  `op_dtm`           DATETIME      NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_run_id`    (`run_id`),
+  KEY `idx_mid`       (`mid`),
+  KEY `idx_tbl_name`  (`tbl_name`(191)),
+  KEY `idx_col_name`  (`column_name`(191))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='소스 정밀 매칭 분석 결과';
+"""
+
+_DDL_CREATE_RESULT_DEFAULT = """
+CREATE TABLE IF NOT EXISTS {table} (
+  `id`               BIGINT        NOT NULL AUTO_INCREMENT  COMMENT '자동증가 PK',
+  `run_id`           VARCHAR(30)   NOT NULL                 COMMENT '실행 ID(YYYYMMDD_HHMMSS)',
+  `mid`              VARCHAR(100)  NOT NULL                 COMMENT '검색 MID',
+  `db_name`          VARCHAR(200)  NULL,
+  `tbl_name`         VARCHAR(500)  NOT NULL,
+  `column_name`      VARCHAR(500)  NULL,
+  `type_name`        VARCHAR(200)  NULL,
+  `integer_idx`      INT           NULL,
+  `mig_dec`          VARCHAR(200)  NULL,
+  `tobe_enc_key`     VARCHAR(200)  NULL,
+  `tobe_enc_rsn`     VARCHAR(1000) NULL,
+  `asis_enc_yn`      VARCHAR(1)    NULL,
+  `source_file`      VARCHAR(500)  NULL,
+  `line_number`      INT           NULL,
+  `matched_line`     TEXT          NULL,
+  `vscode_open_cmd`  VARCHAR(1000) NULL,
+  `query_text`       LONGTEXT      NULL,
   `chk_result`       VARCHAR(10)   NULL                     COMMENT '암호화 검증 결과(OK/NOK)',
   `op_dtm`           DATETIME      NOT NULL,
   PRIMARY KEY (`id`),
@@ -638,6 +666,15 @@ CREATE TABLE IF NOT EXISTS {table} (
 """
 
 _SQL_INSERT_RESULT = """
+INSERT INTO {table}
+  (run_id, mid, db_name, tbl_name, column_name, type_name, integer_idx,
+   mig_dec, tobe_enc_key, tobe_enc_rsn, asis_enc_yn,
+   source_file, line_number, matched_line, vscode_open_cmd, query_text, op_dtm)
+VALUES
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+_SQL_INSERT_RESULT_DEFAULT = """
 INSERT INTO {table}
   (run_id, mid, db_name, tbl_name, column_name, type_name, integer_idx,
    mig_dec, tobe_enc_key, tobe_enc_rsn, asis_enc_yn,
@@ -656,16 +693,17 @@ def db_load_table(mysql_conf: dict, fq_table: str, ddl_create: str, sql_insert: 
         cursor.execute(ddl_create.format(table=fq_table))
         conn.commit()
         
-        # 1-2) 기존 테이블에 chk_result 컬럼이 누락된 경우 자동 추가 (하위 호환성 유지)
-        cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
-        columns = [row[0].lower() for row in cursor.fetchall()]
-        if "chk_result" not in columns:
-            try:
-                cursor.execute("ALTER TABLE %s ADD COLUMN `chk_result` VARCHAR(10) NULL COMMENT '암호화 검증 결과(OK/NOK)' AFTER `query_text`" % fq_table)
-                conn.commit()
-                print("[INFO] 테이블 %s 에 chk_result 컬럼을 자동으로 추가했습니다." % fq_table)
-            except Exception as alter_err:
-                print("[WARNING] 컬럼 추가 실패 (이미 존재하거나 권한 부족): %s" % str(alter_err))
+        # 1-2) 기존 테이블에 chk_result 컬럼이 누락된 경우 자동 추가 (테이블명에 default가 포함된 경우만 하위 호환성 유지)
+        if "default" in fq_table.lower():
+            cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
+            columns = [row[0].lower() for row in cursor.fetchall()]
+            if "chk_result" not in columns:
+                try:
+                    cursor.execute("ALTER TABLE %s ADD COLUMN `chk_result` VARCHAR(10) NULL COMMENT '암호화 검증 결과(OK/NOK)' AFTER `query_text`" % fq_table)
+                    conn.commit()
+                    print("[INFO] 테이블 %s 에 chk_result 컬럼을 자동으로 추가했습니다." % fq_table)
+                except Exception as alter_err:
+                    print("[WARNING] 컬럼 추가 실패 (이미 존재하거나 권한 부족): %s" % str(alter_err))
         
         # 2) 기존 존재하는 경우는 where mid = 'mid' 조건 자료 지우고 등록
         cursor.execute("DELETE FROM %s WHERE `mid` = %%s" % fq_table, (mid,))
@@ -709,30 +747,54 @@ def to_int(v):
     except Exception:
         return None
 
-def build_db_batch(results: list, run_id: str, mid: str, op_dtm: str) -> list:
-    return [
-        (
-            run_id,
-            mid,
-            r.get("db_name"),
-            r.get("tbl_name"),
-            r.get("column_name"),
-            r.get("type_name"),
-            to_int(r.get("integer_idx")),
-            r.get("mig_dec"),
-            r.get("tobe_enc_key"),
-            r.get("tobe_enc_rsn"),
-            r.get("asis_enc_yn"),
-            r.get("source_file"),
-            to_int(r.get("line_number")),
-            r.get("matched_line"),
-            r.get("vscode_open_cmd"),
-            r.get("query_text"),  # DB 적재 시 query_text 보존
-            r.get("chk_result", ""), # chk_result 추가
-            op_dtm
-        )
-        for r in results
-    ]
+def build_db_batch(results: list, run_id: str, mid: str, op_dtm: str, include_chk_result: bool = False) -> list:
+    if include_chk_result:
+        return [
+            (
+                run_id,
+                mid,
+                r.get("db_name"),
+                r.get("tbl_name"),
+                r.get("column_name"),
+                r.get("type_name"),
+                to_int(r.get("integer_idx")),
+                r.get("mig_dec"),
+                r.get("tobe_enc_key"),
+                r.get("tobe_enc_rsn"),
+                r.get("asis_enc_yn"),
+                r.get("source_file"),
+                to_int(r.get("line_number")),
+                r.get("matched_line"),
+                r.get("vscode_open_cmd"),
+                r.get("query_text"),  # DB 적재 시 query_text 보존
+                r.get("chk_result", ""), # chk_result 추가
+                op_dtm
+            )
+            for r in results
+        ]
+    else:
+        return [
+            (
+                run_id,
+                mid,
+                r.get("db_name"),
+                r.get("tbl_name"),
+                r.get("column_name"),
+                r.get("type_name"),
+                to_int(r.get("integer_idx")),
+                r.get("mig_dec"),
+                r.get("tobe_enc_key"),
+                r.get("tobe_enc_rsn"),
+                r.get("asis_enc_yn"),
+                r.get("source_file"),
+                to_int(r.get("line_number")),
+                r.get("matched_line"),
+                r.get("vscode_open_cmd"),
+                r.get("query_text"),  # DB 적재 시 query_text 보존
+                op_dtm
+            )
+            for r in results
+        ]
 
 # ============================================================
 # MAIN
@@ -1059,24 +1121,26 @@ def main():
         # DB 적재 처리 (12차 수정: 결과 데이터가 없더라도 제외 데이터가 존재하면 적재 진행)
         if args.db:
             if included_results:
-                # 1) 메인 테이블 적재 (전체 결과)
-                batch_all = build_db_batch(included_results, run_id, mid, op_dtm)
+                # 1) 메인 테이블 적재 (전체 결과 - chk_result 미포함)
+                batch_all = build_db_batch(included_results, run_id, mid, op_dtm, include_chk_result=False)
                 db_load_table(mysql_conf, fq_out_table, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_all, mid, "결과데이터")
 
                 # all 필터의 경우 파생 테이블에 분리 적재
                 if args.chk == "all":
+                    # default 테이블은 chk_result 포함
                     fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
-                    batch_default = build_db_batch(results_default, run_id, mid, op_dtm)
-                    db_load_table(mysql_conf, fq_out_table_default, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_default, mid, "결과데이터_default")
+                    batch_default = build_db_batch(results_default, run_id, mid, op_dtm, include_chk_result=True)
+                    db_load_table(mysql_conf, fq_out_table_default, _DDL_CREATE_RESULT_DEFAULT, _SQL_INSERT_RESULT_DEFAULT, batch_default, mid, "결과데이터_default")
                     
+                    # encdec_no 테이블은 chk_result 미포함
                     fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
-                    batch_encdec_no = build_db_batch(results_encdec_no, run_id, mid, op_dtm)
+                    batch_encdec_no = build_db_batch(results_encdec_no, run_id, mid, op_dtm, include_chk_result=False)
                     db_load_table(mysql_conf, fq_out_table_encdec_no, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_encdec_no, mid, "결과데이터_encdec_no")
             
-            # 2) 제외 데이터 테이블 적재 (12차 수정)
+            # 2) 제외 데이터 테이블 적재 (12차 수정 - chk_result 미포함)
             if excluded_results:
                 fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
-                batch_exclude = build_db_batch(excluded_results, run_id, mid, op_dtm)
+                batch_exclude = build_db_batch(excluded_results, run_id, mid, op_dtm, include_chk_result=False)
                 db_load_table(mysql_conf, fq_out_table_exclude, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_exclude, mid, "제외데이터")
 
         # Exclude file generation per MID if excluded results are present
