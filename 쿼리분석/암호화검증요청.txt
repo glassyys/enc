@@ -71,6 +71,17 @@ column_name 조회한 칼럼영문명이 있고
 "default.decrypt" 값 2가지만 있는 경우는
 "Converted tobe_enc_key (e.g. e1)" 값이 있을 경우는 'NOK'
 
+p190872_local_chk_v07_gm.py 은 테이블에 등록이 잘되는데
+p190872_local_chk_v08_gm.py 을 실행하면 테이블 데이터가 삭제되고 등록이 안되는 현상인데
+비교해서 오류수정요청
+
+--8차 NOK 경우 추가
+1) column_name 조회한 칼럼영문명이 있고
+2) "default.encrypt" 값이 있지만
+3) column_name 명에 해당하는 테이블 행의 tobe_enc_key의 
+  Converted tobe_enc_key (e.g. e1)에 해당하는 값이 아닌경우는 'NOK' 로 처리하도록 수정
+ 
+
 ================================================
 -- p190872_local_chk_v07_gm.py 로직
 ================================================
