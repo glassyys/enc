@@ -59,6 +59,18 @@ mid,column_name,source_file,line_number,matched_line,vscode_open_cmd,chk_result
 --6차수정요청
 default 분리 CSV 파일과 테이블에 chk_result 칼럼추가수정
 
+--7차수정요청
+아래의 경우 적용되도록 소스수정
+1. 아래인 경우 NOK 인경우 추가  
+1) column_name 조회한 칼럼영문명이 있고
+2) "default.encrypt" 있는데
+3) "Converted tobe_enc_key (e.g. e1)" 값이 없는 경우 'NOK'
+
+2. 아래인 경우 NOK 인 경우 적용 안 되어 있으면 추가 
+column_name 조회한 칼럼영문명이 있고
+"default.decrypt" 값 2가지만 있는 경우는
+"Converted tobe_enc_key (e.g. e1)" 값이 있을 경우는 'NOK'
+
 ================================================
 -- p190872_local_chk_v07_gm.py 로직
 ================================================

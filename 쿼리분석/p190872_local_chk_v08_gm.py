@@ -325,12 +325,17 @@ def verify_default_results(results: list) -> tuple:
         
         is_ok = False
         if has_col:
+            # Case 3: default.encrypt와 default.decrypt가 둘 다 존재하는 경우 (key 존재 무관 OK)
             if has_encrypt and has_decrypt:
                 is_ok = True
-            elif has_encrypt and has_key:
-                is_ok = True
-            elif has_decrypt and not has_key:
-                is_ok = True
+            # Case 1: default.encrypt는 있고 default.decrypt는 없는 경우 (key가 있어야 OK, 없으면 NOK)
+            elif has_encrypt and not has_decrypt:
+                if has_key:
+                    is_ok = True
+            # Case 2: default.decrypt는 있고 default.encrypt는 없는 경우 (key가 없어야 OK, 있으면 NOK)
+            elif has_decrypt and not has_encrypt:
+                if not has_key:
+                    is_ok = True
         
         if is_ok:
             row["chk_result"] = "OK"
@@ -651,6 +656,17 @@ def db_load_table(mysql_conf: dict, fq_table: str, ddl_create: str, sql_insert: 
         cursor.execute(ddl_create.format(table=fq_table))
         conn.commit()
         
+        # 1-2) 기존 테이블에 chk_result 컬럼이 누락된 경우 자동 추가 (하위 호환성 유지)
+        cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
+        columns = [row[0].lower() for row in cursor.fetchall()]
+        if "chk_result" not in columns:
+            try:
+                cursor.execute("ALTER TABLE %s ADD COLUMN `chk_result` VARCHAR(10) NULL COMMENT '암호화 검증 결과(OK/NOK)' AFTER `query_text`" % fq_table)
+                conn.commit()
+                print("[INFO] 테이블 %s 에 chk_result 컬럼을 자동으로 추가했습니다." % fq_table)
+            except Exception as alter_err:
+                print("[WARNING] 컬럼 추가 실패 (이미 존재하거나 권한 부족): %s" % str(alter_err))
+        
         # 2) 기존 존재하는 경우는 where mid = 'mid' 조건 자료 지우고 등록
         cursor.execute("DELETE FROM %s WHERE `mid` = %%s" % fq_table, (mid,))
         conn.commit()
@@ -662,6 +678,7 @@ def db_load_table(mysql_conf: dict, fq_table: str, ddl_create: str, sql_insert: 
         print("[INFO] DB 적재 완료 [%s]: %s (DELETE/INSERT mid=%s, %d 건)" % (table_label, fq_table, mid, len(batch)))
         return len(batch), None
     except Exception as e:
+        print("[ERROR] DB 적재 실패 [%s]: %s" % (table_label, str(e)), file=sys.stderr)
         if conn:
             try: conn.rollback()
             except Exception: pass
