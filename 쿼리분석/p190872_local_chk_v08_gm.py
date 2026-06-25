@@ -298,16 +298,16 @@ def convert_key_to_code(col_key: str) -> str:
 def verify_default_csv(input_csv: str, output_csv: str) -> tuple:
     """
     default 분리 CSV 파일을 읽고, 각 라인(행)마다 다음을 검증한다:
-    - column_name값, 'default.decrypt'(또는 'default.encrypt'/'default.eccyrpt'), 그리고
+    - column_name값, 'default.decrypt'(또는 'default.encrypt'), 그리고
       tobe_enc_key 값을 e1/e2/e3/e4 등으로 컨버전한 값이 matched_line에 동시에 존재
-    모두 만족하면 'OK', 아니면 'NOT OK'로 처리하여 결과 파일(output_csv) 생성.
+    모두 만족하면 'OK', 아니면 'NOK'로 처리하여 결과 파일(output_csv) 생성.
     """
     if not os.path.exists(input_csv):
         return 0, 0, 0
     
     verified_rows = []
     ok_cnt = 0
-    not_ok_cnt = 0
+    nok_cnt = 0
     
     try:
         with open(input_csv, "r", encoding="utf-8-sig") as f:
@@ -329,9 +329,9 @@ def verify_default_csv(input_csv: str, output_csv: str) -> tuple:
                 # case1) column_name, default.encrypt, converted key 모두 존재 시 OK
                 # case2) column_name, default.decrypt 존재하고, converted key는 없을 시 OK
                 # case3) column_name, default.encrypt, default.decrypt 모두 존재 시 (key 여부 상관없이) OK
-                # 그 외 NOT OK
+                # 그 외 NOK
                 has_col = col_lower in line_lower if col_lower else False
-                has_encrypt = ("default.encrypt" in line_lower) or ("default.eccyrpt" in line_lower)
+                has_encrypt = "default.encrypt" in line_lower
                 has_decrypt = "default.decrypt" in line_lower
                 has_key = key_lower in line_lower if key_lower else False
                 
@@ -348,8 +348,8 @@ def verify_default_csv(input_csv: str, output_csv: str) -> tuple:
                     row_chk_result = "OK"
                     ok_cnt += 1
                 else:
-                    row_chk_result = "NOT OK"
-                    not_ok_cnt += 1
+                    row_chk_result = "NOK"
+                    nok_cnt += 1
                 
                 new_row = dict(row)
                 new_row["chk_result"] = row_chk_result
@@ -367,7 +367,7 @@ def verify_default_csv(input_csv: str, output_csv: str) -> tuple:
         print("[WARN] 검증 파일 처리 중 오류 발생: %s" % str(e))
         return 0, 0, 0
                 
-    return len(verified_rows), ok_cnt, not_ok_cnt
+    return len(verified_rows), ok_cnt, nok_cnt
 
 # ============================================================
 # 쿼리 단위 추출
@@ -871,7 +871,7 @@ def main():
         exclude_line_count = 0
         
         # 검증 통계용 초기화
-        total_val, ok_val, not_ok_val = 0, 0, 0
+        total_val, ok_val, nok_val = 0, 0, 0
         csv_path_default_chk = ""
 
         for filepath in files:
@@ -962,11 +962,9 @@ def main():
                             # Apply --chk filters
                             is_included = True
                             if args.chk:
-                                # v08_gm: default.eccyrpt도 함께 체크하여 encdec 분류
                                 has_encdec = (
                                     "default.encrypt" in l_val.lower() or 
-                                    "default.decrypt" in l_val.lower() or
-                                    "default.eccyrpt" in l_val.lower()
+                                    "default.decrypt" in l_val.lower()
                                 )
                                 if args.chk == "default":
                                     is_included = has_encdec
@@ -1033,8 +1031,7 @@ def main():
         if args.chk == "all":
             for r in included_results:
                 line_lower = r.get("matched_line", "").lower()
-                # v08_gm: default.eccyrpt도 default 분리에 포함하도록 검사
-                if "default.encrypt" in line_lower or "default.decrypt" in line_lower or "default.eccyrpt" in line_lower:
+                if "default.encrypt" in line_lower or "default.decrypt" in line_lower:
                     results_default.append(r)
                 else:
                     results_encdec_no.append(r)
@@ -1057,9 +1054,9 @@ def main():
                 
                 # v08_gm: default 분리 CSV 파일에 대한 정상 암호화/복호화 적용 여부 검증 수행
                 csv_path_default_chk = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_default_chk.csv" % (ref_tbl_only, out_suffix)))
-                total_val, ok_val, not_ok_val = verify_default_csv(csv_path_default, csv_path_default_chk)
+                total_val, ok_val, nok_val = verify_default_csv(csv_path_default, csv_path_default_chk)
                 if total_val > 0:
-                    print("[INFO] [검증완료] 파일 저장 완료: %s  (%d 건 - OK: %d, NOT OK: %d)" % (csv_path_default_chk, total_val, ok_val, not_ok_val))
+                    print("[INFO] [검증완료] 파일 저장 완료: %s  (%d 건 - OK: %d, NOK: %d)" % (csv_path_default_chk, total_val, ok_val, nok_val))
         else:
             print("[INFO] '%s' MID에 대해 추출된 매칭 결과 행이 없습니다. (결과 파일 미생성)" % mid)
 
@@ -1112,7 +1109,7 @@ def main():
             if args.chk == "all":
                 summary_lines.append("     - default 분리 CSV : %s (%d 건)" % (csv_path_default, len(results_default)))
                 if total_val > 0:
-                    summary_lines.append("     - default 검증 CSV : %s (%d 건 - OK: %d, NOT OK: %d)" % (csv_path_default_chk, total_val, ok_val, not_ok_val))
+                    summary_lines.append("     - default 검증 CSV : %s (%d 건 - OK: %d, NOK: %d)" % (csv_path_default_chk, total_val, ok_val, nok_val))
                 summary_lines.append("     - encdec_no 분리   : %s (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
             summary_lines.append("     - 화면 출력 파일  : %s (%d 건)" % (print_path, match_line_count))
         else:

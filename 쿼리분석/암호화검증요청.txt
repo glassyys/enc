@@ -38,6 +38,19 @@ column_name 조회한 칼럼영문명이 있고
 "Converted tobe_enc_key (e.g. e1)" 값이 있어도 'OK'
 
 그외 'NOT OK'
+--3차수정요청
+하위디렉토리 소스 중 확장자 uld, ld, sh, sql, hql 소스만 분석하도록 수정
+
+--4차수정요청
+"NOT OK" -> "NOK"로 전체결고 표시 방식 변경하고
+
+아래의 경우는 "NOT OK" 경우 추가 하여 수정
+아래 경우는 기존 "NOT OK" 로 수정소스에서 "NOK" 로 표시하도록 수정
+1) column_name 조회한 칼럼영문명이 있고
+2) "default.encrypt" 구문은 없고 "default.decrypt" 만존재하고
+3) "Converted tobe_enc_key (e.g. e1)" 값이 있는경우
+
+default.eccyrpt 값은 오타라 이부분은 고려하는 내용 제거후 소스수정
 
 ================================================
 -- p190872_local_chk_v07_gm.py 로직
