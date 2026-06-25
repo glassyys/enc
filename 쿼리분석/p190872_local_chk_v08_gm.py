@@ -584,6 +584,7 @@ def is_binary_file(filepath: str) -> bool:
 def get_source_files(search_dir: str, mids: list = None) -> dict:
     result = {}
     search_dir = os.path.abspath(search_dir)
+    allowed_exts = {".uld", ".ld", ".sh", ".sql", ".hql"}
     
     if not mids:
         default_mid = os.path.basename(os.path.normpath(search_dir))
@@ -591,6 +592,9 @@ def get_source_files(search_dir: str, mids: list = None) -> dict:
         if os.path.isdir(search_dir):
             for root, _, filenames in os.walk(search_dir):
                 for f in filenames:
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext not in allowed_exts:
+                        continue
                     filepath = os.path.join(root, f)
                     if not is_binary_file(filepath):
                         files.append(filepath)
@@ -605,6 +609,9 @@ def get_source_files(search_dir: str, mids: list = None) -> dict:
             if os.path.isdir(mid_dir):
                 for root, _, filenames in os.walk(mid_dir):
                     for f in filenames:
+                        ext = os.path.splitext(f)[1].lower()
+                        if ext not in allowed_exts:
+                            continue
                         filepath = os.path.join(root, f)
                         if not is_binary_file(filepath):
                             files.append(filepath)
