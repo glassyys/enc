@@ -350,6 +350,14 @@ def verify_default_csv(input_csv: str, output_csv: str) -> tuple:
                 else:
                     row_chk_result = "NOK"
                     nok_cnt += 1
+                    # NOK 발생 시 화면 출력
+                    print("[NOK] mid=%s, column_name=%s, source_file=%s, line_number=%s, matched_line=%s, vscode_open_cmd=%s, chk_result=NOK" % 
+                          (row.get("mid", "").strip(), 
+                           col_name, 
+                           row.get("source_file", "").strip(), 
+                           row.get("line_number", "").strip(), 
+                           matched_line, 
+                           row.get("vscode_open_cmd", "").strip()))
                 
                 new_row = dict(row)
                 new_row["chk_result"] = row_chk_result

@@ -52,6 +52,10 @@ column_name 조회한 칼럼영문명이 있고
 
 default.eccyrpt 값은 오타라 이부분은 고려하는 내용 제거후 소스수정
 
+--5차수정요청
+nok 가 발생할 경우 아래항목 화면에 출력하도록 수정
+mid,column_name,source_file,line_number,matched_line,vscode_open_cmd,chk_result
+
 ================================================
 -- p190872_local_chk_v07_gm.py 로직
 ================================================
