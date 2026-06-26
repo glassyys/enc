@@ -1,33 +1,87 @@
 아래내용으로 소스생성요청
-p190872_local_chk_v08_3cha.py
+p190872_local_chk_v08_gm.py 참고하여 p190872_local_chk_v08_3cha.py 파일생성
 
-파라미터는 아래와 같고
+1. 파라미터 구조
 <스키마.검색기준테이블> 
 <스키마.검색기준소스테이블> 
-[--db]
-[--conf <경로>]
 [--where <old/new/all>
+- --db: DB 적재 활성화 여부 (선택)
+- --conf: mysql.conf 경로 (선택)
 
-1. 기준칼럼정보추출
-p190872_local_chk_v08_gm.py 참고하여
+2. 기준칼럼정보추출
 검색기준테이블에서 칼럼리스트를
-where 기준으로 기준칼럼추출하도 
+where 기준으로 기준칼럼추출 
 --where old 이면 "where tobe_enc_key <> '' and asis_enc_yn = 'Y'"
 --where new 이면 "where tobe_enc_key <> '' and asis_enc_yn = 'N'"
---where all 이면 "where tobe_enc_key <> ''" 조건으로 조회하도록.
+--where all 이면 "where tobe_enc_key <> '' 조건으로 조회하도록.
+
 2. 칼럼기준 소스검색
-검색기준소스테이블의 local_file에서 
-query_text자료추출하여 기준칼럼추출이 있는 행을 있는 만큼 조회하고
+검색기준소스테이블의 local_file의 소스에서 
+query_text 자료추출하여 기준칼럼추출이 있는 행을 있는 만큼 조회하고
 소스전체기준 라인과 함께 행내용추출하고
-code 명령을 실행할수 있는 vscode_open_cmd를 추출하여 파일을 생성
-3. 테이블생성
+code 명령을 실행할수 있는 vscode_open_cmd
+칼럼과 matched_line 추출하여 파일을 생성
+
+3. 결과테이블생성 및 등록
 1) 테이블은 p190872_ 로시작하고 3차_대상이란 의미단어를 끝에 추가하여 파일명생성
-2) 추출레이아웃는 
-검색기준테이블뒤에
+2) 등록테이블레이아웃은
+검색기준테이블항목 뒤에
 column_name,
 tobe_enc_key,
 Converted tobe_enc_key (e.g. e1),
 line_number,
+vscode_open_cmd,
 matched_line
+
+--2차수정요청
+db_name과 tbl_name 때문에 중복된자료가 나오는 것으로보이는데
+중복제거된 column_name 기준으로
+local_file의 내용을 조회하면서
+아래 레이아웃대로만 추출되도록 하고
+id -- 검색기준소스테이블
+mid -- 검색기준소스테이블
+column_name,
+tobe_enc_key,
+Converted tobe_enc_key (e.g. e1),
+line_number,
+vscode_open_cmd,
+matched_line
+
+아래 값들 중복은 발생하지 않게 수정부탁
+column_name,
+tobe_enc_key,
+Converted tobe_enc_key (e.g. e1),
+line_number,
+vscode_open_cmd,
+matched_line
+
+그리고
+추가로 파일생성을 아래형식대로 하되 
+match_str 은 테이블 대신 column_name 으로 추출되도록 수정해서 처리하고
+실행시 화면에도 내용을 출력하도록 수정요청합니다.
+
+match_str = "[매칭] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
+content_str = "[내용] %s" % l_val.strip()
+vscode_open_cmd = "[code] ...
+
+--3차수정요청
+local_file 기준으로 작업진행되는 상황을 화면 출력하도록 수정부탁
+local_file 은 검색기준테이블 column_name으로 조회시작시 한번만 출력
+
+--4차수정요청
+검색기준테이블 자료가 없으면
+column_name,tobe_enc_keys, conv_tobe_enc_key, matched_line는 '' 처리하고
+line_number 1행 기준으로 vscode_open_cmd 값으로 등록하도록 수정
+화면출력은 상위 10개 처리에 대해서만 하도록 수정하고 파일생성은 그대로 처리하도록 수정
+
+--5차수정요청
+1. 검색기준소스테이블에서 column_name 매칭되는 자료가 없더라고
+id값 기준 1개의 행은 아래 기준값대로 결과테이블 생성되도록 수정
+column_name,tobe_enc_keys, conv_tobe_enc_key, matched_line는 '' 처리하고
+line_number 1행 기준으로 vscode_open_cmd 값으로 등록하도록 수정
+
+2. 화면출력 [진행] 부분에 검색기준테이블의 id값도 추가료 표시하도록 수정
+
+--6차수정요청
 
 
