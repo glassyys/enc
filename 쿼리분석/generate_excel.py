@@ -117,6 +117,14 @@ def create_excel():
             "param_desc": "- <분석대상_디렉토리>: 소스 파일 탐색 디렉토리 (필수)\n- <스키마.검색기준테이블>: 로컬 CSV 대신 검색 기준으로 사용하는 DB 내 테이블 (필수)\n- --db: DB 적재 활성화 여부\n- --conf: mysql.conf 경로",
             "opt_desc": "- <스키마.검색기준테이블>: 기준 정보가 담긴 DB 스키마/테이블 지정 (상시 DB 연동 동작)",
             "features": "기준 정보를 로컬 CSV 대신 DB 검색기준 테이블에서 조회하여 동작하며, tbl_name과 cols (복합 칼럼 정보, 예: col_01:k1,col_bb:k2)를 파싱하여 개별 칼럼 단위 매칭을 수행함. 매칭이 없는 행도 NULL로 보존하는 정합성이 추가됨."
+        },
+        {
+            "no": 13,
+            "program": "p190872_local_chk_v08_3cha.py",
+            "params": "<검색기준테이블>\n<검색기준소스테이블>\n[--where <old/new/all>]\n[--db]\n[--conf <경로>]",
+            "param_desc": "- <검색기준테이블>: DB 내 검색 대상 기준 테이블 (필수)\n- <검색기준소스테이블>: DB 내 local_file, id, mid, source_file 정보를 지닌 대상 소스 테이블 (필수)\n- --where: 검색기준테이블 조회 조건 필터 (old, new, all 중 선택, 기본값 all)\n- --db: 분석 결과 DB 테이블 적재 활성화 여부 (선택)\n- --conf: DB 접속 정보 설정 파일 경로 (선택)",
+            "opt_desc": "- --where: 'old', 'new', 'all' 중 선택하여 기준 테이블 조회 필터링 (old: asis_enc_yn='Y', new: asis_enc_yn='N')\n- --db: 지정 시 분석 결과를 <검색기준소스테이블명>_work 테이블에 자동 적재\n- --conf: 기본 mysql.conf 경로 재지정",
+            "features": "3차 암호화 대상 검출 최종 프로그램. 검색기준테이블의 column_name 기준으로 중복 없이 기준 칼럼을 추출하여, 소스테이블에 등록된 local_file 파일 소스 전체를 파싱/완전일치 매칭함. vscode_open_cmd에서 [code] 접두사를 제거하여 vscode 이동 명령어를 기록하고, source_file 컬럼을 함께 로드하여 결과 파일 및 DB에 적재함. 매칭 결과가 없는 파일도 ID별로 기본 행(line_number: 1)을 생성하며, 화면 콘솔에는 상위 10개 매칭 결과만 제한 출력함."
         }
     ]
 
