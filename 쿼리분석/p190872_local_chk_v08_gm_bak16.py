@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ===============================================================
-# p190872_local_chk_v08_gm.py(20260628 - 17차 수정)
+# p190872_local_chk_v08_gm.py(20260628 - 15차 수정)
 #
 # [수정 사항 요약]
 #   - Python 2.7.5 호환성 전면 적용: 
@@ -9,13 +9,6 @@
 #     * codecs.open() 사용으로 인코딩 오류 방지
 #     * os.makedirs(exist_ok=True) -> os.path.exists() 사전 검사 분기 적용
 #     * ConfigParser 임포트 호환성 추가
-#   - 17차 추가요청 반영:
-#     * default.encrypt/decrypt 함수 첫 번째 인자가 식별자(컬럼)가 아닌 리터럴 상수인 경우(예: '', '1', '산', '#', NULL 등) 'dummy'로 선치환하여 비교 대상에서 완전히 배제
-#     * 수정 전 백업 보관 정책 준수 (bak17)
-#   - 16차 추가요청 반영:
-#     * col is null 및 col is not null 단독 구문 비교 추출 제외 처리
-#     * CASE WHEN 조건절 내 컬럼을 비교 탐색 대상에서 배제 처리 (when ... then 부분을 then으로 치환하는 전처리 도입)
-#     * 수정 전 백업 보관 정책 준수 (bak16)
 #   - 15차 추가요청 반영:
 #     * 비교 CSV 파일 추출 시 default.encrypt/decrypt 함수 껍데기 벗기기(정규화) 선처리 도입
 #     * 정규화된 컬럼명을 기반으로 기존 13차 비교 패턴(AS, =, CASE, 기타연산자 등)을 실행하여 암복호화 구문이 씌워진 컬럼들도 누락 없이 완벽 매칭
@@ -870,7 +863,7 @@ def build_db_batch(results, run_id, mid, op_dtm, include_chk_result=False):
 # MAIN
 # ============================================================
 def main():
-    parser = argparse.ArgumentParser(description="Query Analyzer Script (v08_gm - 17차 수정)")
+    parser = argparse.ArgumentParser(description="Query Analyzer Script (v08_gm - 15차 수정)")
     parser.add_argument("ref_table", help="검색기준테이블")
     parser.add_argument("search_dir", help="검색디렉토리")
     parser.add_argument("out_table", help="검색결과테이블명")
@@ -1158,46 +1151,16 @@ def main():
                                     })
                                     excluded_results.append(result_row)
 
-            # 13차, 15차 및 16차 추가요청: 쿼리 분석 완료 후 라인 단위로 서로 다른 컬럼 비교 탐색 수행
+            # 13차 및 15차 추가요청: 쿼리 분석 완료 후 라인 단위로 서로 다른 컬럼 비교 탐색 수행
             for l_num, matched_cols in line_to_matched_cols.items():
                 info = line_info_map[l_num]
                 clean_l_val = info["clean_l_val"]
-                
-                # 16차 수정요청: is null 단독 구문 및 case when 조건절 전처리 제거
-                # 1) 'is null' 또는 'is not null' 제거
-                clean_l_val = re.sub(
-                    r"(?i)\bis\s+(?:not\s+)?null\b",
-                    " ",
-                    clean_l_val
-                )
-                # 2) case when ... then 구문에서 when 절 조건부만 제거하고 then만 남김
-                clean_l_val = re.sub(
-                    r"(?i)\bwhen\b.*?\bthen\b",
-                    "then",
-                    clean_l_val
-                )
-
                 l_val_lower = info["matched_line"].lower()
                 
                 # default.encrypt/decrypt 함수 껍데기 벗기기 (정규화)
                 norm_l_val = clean_l_val
                 has_default_encdec = "default.encrypt" in l_val_lower or "default.decrypt" in l_val_lower
                 if has_default_encdec:
-                    # 1) 인자가 상수/리터럴인 경우 제외를 위해 'dummy'로 치환 선처리
-                    # default.decrypt(상수) -> 'dummy'
-                    norm_l_val = re.sub(
-                        r"(?i)default\.decrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*\)",
-                        "'dummy'",
-                        norm_l_val
-                    )
-                    # default.encrypt(상수, key) -> 'dummy'
-                    norm_l_val = re.sub(
-                        r"(?i)default\.encrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*,\s*[^)]*?\)",
-                        "'dummy'",
-                        norm_l_val
-                    )
-
-                    # 2) 정상적인 컬럼명 인자인 경우 기존 정규화 진행
                     # default.decrypt(col) -> col 치환
                     norm_l_val = re.sub(
                         r"(?i)default\.decrypt\s*\(\s*([a-zA-Z0-9_.]+)\s*\)",

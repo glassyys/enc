@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ===============================================================
-# p190872_local_chk_v08_gm.py(20260628 - 17차 수정)
+# p190872_local_chk_v08_gm.py(20260628 - 16차 수정)
 #
 # [수정 사항 요약]
 #   - Python 2.7.5 호환성 전면 적용: 
@@ -9,9 +9,6 @@
 #     * codecs.open() 사용으로 인코딩 오류 방지
 #     * os.makedirs(exist_ok=True) -> os.path.exists() 사전 검사 분기 적용
 #     * ConfigParser 임포트 호환성 추가
-#   - 17차 추가요청 반영:
-#     * default.encrypt/decrypt 함수 첫 번째 인자가 식별자(컬럼)가 아닌 리터럴 상수인 경우(예: '', '1', '산', '#', NULL 등) 'dummy'로 선치환하여 비교 대상에서 완전히 배제
-#     * 수정 전 백업 보관 정책 준수 (bak17)
 #   - 16차 추가요청 반영:
 #     * col is null 및 col is not null 단독 구문 비교 추출 제외 처리
 #     * CASE WHEN 조건절 내 컬럼을 비교 탐색 대상에서 배제 처리 (when ... then 부분을 then으로 치환하는 전처리 도입)
@@ -870,7 +867,7 @@ def build_db_batch(results, run_id, mid, op_dtm, include_chk_result=False):
 # MAIN
 # ============================================================
 def main():
-    parser = argparse.ArgumentParser(description="Query Analyzer Script (v08_gm - 17차 수정)")
+    parser = argparse.ArgumentParser(description="Query Analyzer Script (v08_gm - 16차 수정)")
     parser.add_argument("ref_table", help="검색기준테이블")
     parser.add_argument("search_dir", help="검색디렉토리")
     parser.add_argument("out_table", help="검색결과테이블명")
@@ -1183,21 +1180,6 @@ def main():
                 norm_l_val = clean_l_val
                 has_default_encdec = "default.encrypt" in l_val_lower or "default.decrypt" in l_val_lower
                 if has_default_encdec:
-                    # 1) 인자가 상수/리터럴인 경우 제외를 위해 'dummy'로 치환 선처리
-                    # default.decrypt(상수) -> 'dummy'
-                    norm_l_val = re.sub(
-                        r"(?i)default\.decrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*\)",
-                        "'dummy'",
-                        norm_l_val
-                    )
-                    # default.encrypt(상수, key) -> 'dummy'
-                    norm_l_val = re.sub(
-                        r"(?i)default\.encrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*,\s*[^)]*?\)",
-                        "'dummy'",
-                        norm_l_val
-                    )
-
-                    # 2) 정상적인 컬럼명 인자인 경우 기존 정규화 진행
                     # default.decrypt(col) -> col 치환
                     norm_l_val = re.sub(
                         r"(?i)default\.decrypt\s*\(\s*([a-zA-Z0-9_.]+)\s*\)",
@@ -1308,153 +1290,3 @@ def main():
                     }
                     diff_cols_results.append(diff_row)
                     diff_cols_line_count += 1
-
-        csv_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s.csv" % (ref_tbl_only, out_suffix)))
-        print_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_print.txt" % (ref_tbl_only, out_suffix)))
-        ex_txt_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_exclude.txt" % (ref_tbl_only, out_suffix)))
-        diff_csv_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_diff_cols.csv" % (ref_tbl_only, out_suffix)))
-
-        results_default = []
-        results_encdec_no = []
-        if args.chk == "all":
-            for r in included_results:
-                line_lower = r.get("matched_line", "").lower()
-                if "default.encrypt" in line_lower or "default.decrypt" in line_lower:
-                    results_default.append(r)
-                else:
-                    results_encdec_no.append(r)
-            
-            total_val, ok_val, nok_val = verify_default_results(results_default)
-
-        if included_results:
-            save_csv(included_results, csv_path, CSV_FIELDNAMES, op_dtm)
-            print("[INFO] 파일 저장 완료: %s  (%d 건)" % (csv_path, len(included_results)))
-
-            if args.chk == "all":
-                csv_path_default = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_default.csv" % (ref_tbl_only, out_suffix)))
-                csv_path_encdec_no = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_encdec_no.csv" % (ref_tbl_only, out_suffix)))
-                
-                save_csv(results_default, csv_path_default, CSV_FIELDNAMES + ["chk_result"], op_dtm)
-                print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
-                
-                save_csv(results_encdec_no, csv_path_encdec_no, CSV_FIELDNAMES, op_dtm)
-                print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
-        else:
-            print("[INFO] '%s' MID에 대해 추출된 매칭 결과 행이 없습니다. (결과 파일 미생성)" % mid)
-
-        if diff_cols_results:
-            save_csv(diff_cols_results, diff_csv_path, CSV_FIELDNAMES, op_dtm)
-            print("[INFO] 파일 저장 완료 (서로 다른 컬럼 비교): %s  (%d 건)" % (diff_csv_path, len(diff_cols_results)))
-        else:
-            print("[INFO] '%s' MID에 대해 추출된 서로 다른 컬럼 비교 매칭 결과가 없습니다. (비교 결과 파일 미생성)" % mid)
-
-        if args.db:
-            if included_results:
-                batch_all = build_db_batch(included_results, run_id, mid, op_dtm, include_chk_result=False)
-                db_load_table(mysql_conf, fq_out_table, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_all, mid, "결과데이터")
-
-                if args.chk == "all":
-                    fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
-                    batch_default = build_db_batch(results_default, run_id, mid, op_dtm, include_chk_result=True)
-                    db_load_table(mysql_conf, fq_out_table_default, _DDL_CREATE_RESULT_DEFAULT, _SQL_INSERT_RESULT_DEFAULT, batch_default, mid, "결과데이터_default")
-                    
-                    fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
-                    batch_encdec_no = build_db_batch(results_encdec_no, run_id, mid, op_dtm, include_chk_result=False)
-                    db_load_table(mysql_conf, fq_out_table_encdec_no, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_encdec_no, mid, "결과데이터_encdec_no")
-            
-            if excluded_results:
-                fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
-                batch_exclude = build_db_batch(excluded_results, run_id, mid, op_dtm, include_chk_result=False)
-                db_load_table(mysql_conf, fq_out_table_exclude, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_exclude, mid, "제외데이터")
-
-            if diff_cols_results:
-                fq_out_table_diff_cols = make_fq(out_schema, out_tbl_only + "_diff_cols")
-                batch_diff_cols = build_db_batch(diff_cols_results, run_id, mid, op_dtm, include_chk_result=False)
-                db_load_table(mysql_conf, fq_out_table_diff_cols, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_diff_cols, mid, "비교데이터(diff_cols)")
-
-        if len(mid_exclude_buffer) > 3:
-            with codecs.open(ex_txt_path, "w", encoding="utf-8") as ef:
-                ef.write("\n".join(mid_exclude_buffer) + "\n")
-            print("[INFO] 제외행 내용 파일 생성 완료: %s" % ex_txt_path)
-
-        summary_lines = []
-        summary_lines.append("=" * 80)
-        summary_lines.append(" [분석 완료 요약 - MID: %s]" % mid)
-        summary_lines.append("=" * 80)
-        summary_lines.append("  - 검색 대상 기준 테이블   : %s" % args.ref_table)
-        summary_lines.append("  - 검색 대상 소스 파일 수   : %d 개" % total_files_scanned)
-        summary_lines.append("  - 매칭 발생 소스 파일 수   : %d 개" % len(files_with_matches))
-        summary_lines.append("  - 매칭 건수 (포함)          : %d 건" % match_line_count)
-        if args.chk == "all":
-            summary_lines.append("     * default 암복호화 매칭 : %d 건" % len(results_default))
-            summary_lines.append("     * 일반 가공 칼럼 매칭   : %d 건" % len(results_encdec_no))
-        summary_lines.append("  - 매칭 건수 (제외)          : %d 건" % exclude_line_count)
-        summary_lines.append("  - 매칭 건수 (서로다른컬럼비교): %d 건" % diff_cols_line_count)
-        summary_lines.append("-" * 80)
-        summary_lines.append("  1. 생성 파일 정보")
-        if included_results:
-            summary_lines.append("     - 결과 CSV 파일   : %s (%d 건)" % (csv_path, len(included_results)))
-            if args.chk == "all":
-                if total_val > 0:
-                    summary_lines.append("     - default 분리 CSV : %s (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
-                else:
-                    summary_lines.append("     - default 분리 CSV : %s (%d 건)" % (csv_path_default, len(results_default)))
-                summary_lines.append("     - encdec_no 분리   : %s (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
-            summary_lines.append("     - 화면 출력 파일  : %s (%d 건)" % (print_path, match_line_count))
-        else:
-            summary_lines.append("     - 결과 CSV 파일   : (생성 없음)")
-            summary_lines.append("     - 화면 출력 파일  : (생성 없음)")
-            
-        if diff_cols_results:
-            summary_lines.append("     - 비교 CSV 파일   : %s (%d 건)" % (diff_csv_path, len(diff_cols_results)))
-        else:
-            summary_lines.append("     - 비교 CSV 파일   : (생성 없음)")
-
-        if len(mid_exclude_buffer) > 3:
-            summary_lines.append("     - 제외 로그 파일  : %s (%d 건)" % (ex_txt_path, exclude_line_count))
-        else:
-            summary_lines.append("     - 제외 로그 파일  : (생성 없음)")
-            
-        summary_lines.append("  2. DB 적재 정보")
-        if args.db:
-            if included_results:
-                summary_lines.append("     - 결과 DB 테이블  : %s (%d 건)" % (fq_out_table, len(included_results)))
-                if args.chk == "all":
-                    fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
-                    fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
-                    summary_lines.append("     - default DB 테이블: %s (%d 건)" % (fq_out_table_default, len(results_default)))
-                    summary_lines.append("     - encdec_no 테이블 : %s (%d 건)" % (fq_out_table_encdec_no, len(results_encdec_no)))
-            else:
-                summary_lines.append("     - 결과 DB 테이블  : (적재 없음)")
-                
-            if excluded_results:
-                fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
-                summary_lines.append("     - 제외 DB 테이블  : %s (%d 건)" % (fq_out_table_exclude, len(excluded_results)))
-            else:
-                summary_lines.append("     - 제외 DB 테이블  : (적재 없음)")
-
-            if diff_cols_results:
-                fq_out_table_diff_cols = make_fq(out_schema, out_tbl_only + "_diff_cols")
-                summary_lines.append("     - 비교 DB 테이블  : %s (%d 건)" % (fq_out_table_diff_cols, len(diff_cols_results)))
-            else:
-                summary_lines.append("     - 비교 DB 테이블  : (적재 없음)")
-        else:
-            summary_lines.append("     - 결과/제외/비교 DB 테이블 : (적재 없음)")
-        summary_lines.append("=" * 80)
-
-        for line in summary_lines:
-            print(line)
-
-        mid_print_buffer.extend(summary_lines)
-        if included_results or diff_cols_results:
-            with codecs.open(print_path, "w", encoding="utf-8") as pf:
-                pf.write("\n".join(mid_print_buffer) + "\n")
-            print("[INFO] 화면출력내용 파일 생성 완료: %s" % print_path)
-
-    print("=" * 80)
-    print(" [매칭 분석 공정 완료]")
-    print("=" * 80)
-
-
-if __name__ == "__main__":
-    main()
