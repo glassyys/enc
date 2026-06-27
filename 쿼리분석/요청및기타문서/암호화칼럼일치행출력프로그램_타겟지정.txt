@@ -208,7 +208,8 @@ p190872_local_chk_v06_gm.py  소스를 아래 내용으로 수정해서
 --12차 추가요청
 exclude 로 생성한 제외한 파일도 테이블로 생성하는 부분추가
 
--- 13차 추가요청(20260627)
+-- 13차 추가요청(20260627) 15:53
+기존로직 유지하고 아래경우 추가하여 수정
 1. 생성파일추가요청-아래의 경우를 추가파일로 생성요청하고 테이블도 추가요청
  1) "as" 문 추출
     column_name 에 해댕하는 값이 2개이상이면서 as 사이에 서로 다른 칼럼이 존재하는경우
@@ -217,5 +218,35 @@ exclude 로 생성한 제외한 파일도 테이블로 생성하는 부분추가
     where 이나 join문의 on절에서 
 	column_name 에 해댕하는 값이 2개이상이면서 = 사이에 서로 다른 칼럼이 존재하는경우
  3) case 문에서 서로다른칼럼 
-    case when 조건 then col1 else col2 end 인 경우
-	then 다음 col과 else 다음 col2  칼럼이 서로다르고 모두 column_name에 해당할때
+    가) case when 조건 then col1 else col2 end 인 경우
+	then 다음 문장에 매칭칼럼 col1과 
+	else 다음 매칭칼럼 col2이 서로 다른상태이고
+	두 칼럼 모두 column_name에 해당할때
+	나) case when 조건 then col1 else col2 end as col3 인경우
+	   else 다음 col2 와  end as 뒤 col3로 다르고 두 칼럼 모두 column_name에 해당할때
+ 4) 혹시 서로 다른 칼럼 비교하는 구문이면서 두 칼럼 모두 column_name에 해당되는 경우
+
+■[ERROR] mysql.conf 읿기오류:'ConfigParser' object has no attribute 'readfp' 오류가 실행하면 나는데 원인과 해결책은
+발생한 오류의 원인과 조치 내역을 설명해 드립니다.
+
+1. 오류 원인
+Python 3.12 이상 버전에서는 기존에 오래 사용되던 ConfigParser 객체의 readfp 메서드가 완전히 삭제되었습니다. 수정된 코드가 Python 2.7.5 환경과 Python 3(최신 버전) 환경 모두에서 동작해야 하기 때문에, Python 3 환경에서 실행할 때 readfp 메서드가 없어 해당 오류가 발생한 것입니다.
+
+2. 해결책 (반영 완료)
+이를 해결하기 위해 p190872_local_chk_v08_gm.py 소스 코드의 load_mysql_conf 함수 내부를 하이브리드 호환 방식으로 변경했습니다.
+
+read_file 메서드가 있는 환경(최신 Python 3)인 경우 read_file을 우선 호출하고,
+그렇지 않은 환경(Python 2)인 경우 기존의 readfp를 사용하도록 자동 분기 처리했습니다.
+python
+cp = configparser.ConfigParser()
+    try:
+        with codecs.open(path, "r", encoding="utf-8") as f:
+            if hasattr(cp, "read_file"):
+                cp.read_file(f)  # Python 3 호환
+            else:
+                cp.readfp(f)     # Python 2 호환
+현재 
+
+p190872_local_chk_v08_gm.py
+ 파일에 해당 조치를 완료해 두었으니, 다시 한번 실행하여 확인해 보시기 바랍니다!
+
