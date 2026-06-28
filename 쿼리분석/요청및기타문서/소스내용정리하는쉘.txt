@@ -1,0 +1,68 @@
+엑셀 분석 요약 최신화 및 실행 쉘 작성 계획
+본 계획서는 소스 프로그램 분석 요약 엑셀 문서(소스프로그램_분석_요약_20260628.xlsx) 생성 스크립트인 generate_excel.py를 최신 17차 수정 내용에 맞춰 업데이트하고, 사용자가 간편히 실행할 수 있도록 구동 쉘 배치 파일(generate_excel.bat)을 작성하는 계획을 정의합니다.
+
+User Review Required
+IMPORTANT
+
+엑셀 파일명 규칙:
+생성되는 엑셀 파일명은 오늘 날짜를 반영하여 소스프로그램_분석_요약_20260628.xlsx로 지정합니다.
+최신 분석 요약 반영 대상:
+p190872_local_chk_v08_gm.py (No. 4): 17차 수정 사항(리터럴 상수 dummy 치환 배제, compare_col1/compare_col2 비교 컬럼 정보 추출 및 레이아웃 추가, DB 적재 시 자동 ALTER 및 DROP & CREATE 재생성 복구 기능)을 반영하여 기술합니다.
+p190872_local_chk_v08_3cha.py (No. 13): 3차 검출용 특화 버전 사양(vscode [code] 표시 제거, source_file 컬럼 로드 및 적재, 상위 10개 콘솔 출력 등)을 기술합니다.
+실행 쉘 작성:
+d:\workspace\enc\쿼리분석\generate_excel.bat 파일을 작성하여 사용자가 언제든 엑셀을 재생성할 수 있도록 합니다.
+Proposed Changes
+엑셀 생성 스크립트 및 쉘
+[NEW] 
+generate_excel.bat
+python generate_excel.py 명령을 감싼 윈도우 배치 파일을 생성합니다.
+[MODIFY] 
+generate_excel.py
+백업 파일 generate_excel_bak20260628.py를 생성한 후 수정을 진행합니다.
+create_excel 함수 내 data 리스트의 p190872_local_chk_v08_gm.py (No. 4) 및 p190872_local_chk_v08_3cha.py (No. 13) 항목의 내용을 최신 17차 수정본 기준 사양으로 보완합니다.
+저장되는 엑셀 파일명을 "소스프로그램_분석_요약_20260628.xlsx"로 변경합니다.
+Verification Plan
+Manual Verification
+백업 생성:
+generate_excel.py를 generate_excel_bak20260628.py로 백업합니다.
+코드 및 쉘 생성:
+수정 계획대로 generate_excel.py를 편집하고 generate_excel.bat을 생성합니다.
+쉘 파일 실행:
+터미널이나 탐색기에서 generate_excel.bat을 실행합니다.
+결과 확인:
+d:\workspace\enc\쿼리분석 하위에 소스프로그램_분석_요약_20260628.xlsx 파일이 에러 없이 잘 생성되는지 확인합니다.
+
+
+PS D:\workspace\enc> D:\workspace\enc\쿼리분석\generate_excel.bat
+'generate_excel.bat' 프로그램을 실행하지 못했습니다. 지정된 파일을 찾을 수 없습니다위치 줄:1 문자:1
++ D:\workspace\enc\쿼리분석\generate_excel.bat
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.
+위치 줄:1 문자:1
++ D:\workspace\enc\쿼리분석\generate_excel.bat
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ResourceUnavailable: (:) [], ApplicationFailedException
+    + FullyQualifiedErrorId : NativeCommandFailed
+
+
+오후 10:43
+PowerShell 터미널의 작업 디렉토리가 D:\workspace\enc인 상태에서 배치 파일(D:\workspace\enc\쿼리분석\generate_excel.bat)을 실행했을 때, 배치 파일 내부에서 generate_excel.py의 상대 경로를 찾지 못하거나 구동 환경 불일치로 인해 발생한 에러로 보입니다.
+
+이를 해결하기 위해 
+
+generate_excel.bat
+ 파일 내에 배치 파일이 위치한 경로로 자동으로 작업 디렉토리를 전환하는 로직(cd /d "%~dp0")을 상단에 추가하여 수정하였습니다.
+
+수정된 상태에서 아래 방법 중 하나를 선택해 다시 실행해 주시기 바랍니다.
+
+방법 1. 쉘 배치 파일 경로로 이동 후 실행 (권장)
+PowerShell 터미널에서 쿼리분석 디렉토리로 이동한 뒤 배치 파일을 실행합니다.
+
+powershell
+cd D:\workspace\enc\쿼리분석
+.\generate_excel.bat
+방법 2. 직접 파이썬 명령어로 기동
+터미널에서 직접 파이썬 스크립트 경로를 명시하여 기동합니다.
+
+powershell
+python D:\workspace\enc\쿼리분석\generate_excel.py
+오후 10:42

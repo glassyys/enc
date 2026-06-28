@@ -302,3 +302,85 @@ and col1 = default.encrypt('', 'e2')
 and col1 = default.encrypt('1', 'e2')
 and col1 = default.encrypt('산', 'e2')
 and col1 = default.encrypt('a', 'e2')
+
+
+17차 수정요청(20260628)
+"비교 CSV 파일" 에 레이아웃 추가
+1. 비교칼럼명에대한 칼럼명과 tobe_enc_key값 컨버전 정보추출
+비교칼럼(column_name)과 p190872_local_chk_v08_3cha.py 소스 로직에 있는
+conv_tobe_enc_key(e1~e4 변환키)정보를 추출하되 아래 예시처럼 정리
+1) 비교첫번째칼럼추출 표시 예시
+col1:e2
+2) 비교두번째칼럼추출 표시 예시
+col2:e1
+column_name 에 없는 칼럼이라면 칼럼영:99 로만 표시하도록 로직 수정
+
+2. 칼럼추가위치
+tobe_enc_key 다음에 추가
+
+17차 수정 보완 요청
+아래 내용 반영하여 소스수정요청
+테이블등록시 파일레이아웃과 달라서 오류나면
+테이블 drop 하고
+생성파일과 추가하려던 칼럼 추가해서 다시 테이블 생성후 등록하도록 소스수정
+원하는 칼럼위치에 삽입시킬수 있다면 칼럼 alter 명령으로 추가하고 처리하고
+중간에 칼럼을 삽입 못하면
+drop 하고 새로운칼럼추가한 기준으로 테이블 생성 다시하면 됩니다. 
+
+18차 수정요청(20260628)
+D:\workspace\enc\쿼리분석\p190872_local_chk_v08_gm.py
+특이케이스 "비교 CSV 파일" 파일생성 제외
+아래의 1,2 경우는 "비교 CSV 파일"에 생성되지 않도록 수정하고 이와 유사한 경우
+즉 default관련함수를 생략하면 칼럼명이 추출 안되는데 비교대상으로
+sql문에 사용하는 단어가 추출되는 경우가 있는데 이런 부분은
+추출되지 않도록 소스 수정
+1. nvl 과 case 문
+아래의 경우는 default 관련내용을 제외하면 칼럼이 비교되지 않는 경우인데
+nvl(case col1 when default.encrypt('', 'e2') then default.encrypt('#', 'e2') else col1 end, default.encrypt('#', 'e2'))
+결과가
+compare_col1 에는 col1:e2
+compare_col2 에는 then:99
+이렇게 등록된 것으로 나오는데 이런경우 
+"비교 CSV 파일"에 생성되지 않도록 수정
+2. where ~ and 
+where col_dt = '12' and  default.decrypt(col2) not like '#%'
+결과가
+compare_col1 에는 col2:e3
+compare_col2 에는 not:99
+이런식으로 나오는데 "비교 CSV 파일"에 생성되지 않도록 수정
+
+18차 수정보완요청
+아래의 경우는 col2 와 as 뒤의 n2_col_org 칼럼이 비교되어야 하는데
+,default.decrypt(max(case when col1='a' then default.decrypt(col2) else '#' end), 'e2') as n2_col_org
+아래와 같은 결과가 나왔는데
+compare_col1 에는 else:99
+compare_col2 에는 col2:e2
+이경우는 col2와 as 뒤 n2_col_org 와 비교해야 합니다.
+
+결국은 최종은 as 뒤 칼럼이 타겟이라
+as 이전 쿼리문에 있는 칼럼과 
+ad 이후 칼럼이 다른 경우를 비교하는 원리입니다.
+수정후 이런케이스는 사라졌는데 
+이런 케이스가 생성되도록 수정요청
+
+18차 수정보완요청2
+if(col1 is not null, col2, col3) as col3
+
+이런경우는 
+col2 와 col3 를 비교해야하고
+"비교 CSV 파일" 생성시
+두 칼럼중 하나 이상은 column_name에 해당해야 하는 것은 적용되었는지 확인하고
+안 되어 있으면 보완요청합니다
+결국 as 문의 경우는 실제 결과과 되는 칼럼과 as 뒤 타겟 칼럼이 다른 경우에만 추출하는 것입니다.
+
+18차 수정보완요청3
+row_number() 이 있는 행은 "비교 CSV 파일" 생성시 제외 요청합니다.
+오탐이 많습니다.
+
+19차 수정요청
+테이블명을 --where new
+경우 기존에 new 가 없었는데
+old 처리하는 것처럼 
+midp_all_new 명칭으로 변경해서 생성하도록 수정
+아마 파일명은 그렇게 생성되었을 것입니다.
+

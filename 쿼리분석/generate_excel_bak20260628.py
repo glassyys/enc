@@ -1,7 +1,7 @@
 import os
 import sys
 import subprocess
-
+ 
 # Ensure openpyxl is installed
 try:
     import openpyxl
@@ -18,7 +18,7 @@ except ImportError:
     except Exception as e:
         print(f"[ERROR] openpyxl 설치에 실패했습니다. 수동으로 'pip install openpyxl'을 실행해 주세요. 에러: {e}")
         sys.exit(1)
-
+ 
 def create_excel():
     # 12개 파이썬 소스 분석 데이터 정의
     data = [
@@ -44,15 +44,15 @@ def create_excel():
             "params": "<검색기준테이블>\n<검색디렉토리>\n[--mid <MID목록>]\n[--db]\n[--conf <경로>]\n[--where <old/new>]\n[--chk <default/encdec_no>]",
             "param_desc": "- <검색기준테이블>: DB 검색 기준 테이블 (필수)\n- <검색디렉토리>: 소스 파일 탐색 로컬 디렉토리 (필수)\n- --mid: 검색할 하위 MID 디렉토리 목록 (쉼표 구분)\n- --where: 검색기준테이블 조회 조건 필터\n- --chk: 암호화/복호화 포함/제외 필터",
             "opt_desc": "- --mid: 미지정 시 전체 MID를 분석\n- --where: 'old' 또는 'new' 중 선택하여 기준 테이블 조회 필터링\n- --chk: 'default'(암복호화 포함) 또는 'encdec_no'(암복호화 제외) 중 분석 조건 선택",
-            "features": "지정한 로컬 디렉토리 하위의 소스 파일들을 분석하여 칼럼 사용 여부를 상세 매칭함. SQL 주석 제거, Pure Column 제외 필터(Omit/Include 룰)를 적용하여 가공이나 함수가 적용된 식만 추출하며, MID별 개별 탐색, 화면 출력용 print.txt 및 제외 행 로그용 exclude.txt 파일을 생성함."
+            "features": "지정한 로컬 디렉토리 하위 of 소스 파일들을 분석하여 칼럼 사용 여부를 상세 매칭함. SQL 주석 제거, Pure Column 제외 필터(Omit/Include 룰)를 적용하여 가공이나 함수가 적용된 식만 추출하며, MID별 개별 탐색, 화면 출력용 print.txt 및 제외 행 로그용 exclude.txt 파일을 생성함."
         },
         {
             "no": 4,
             "program": "p190872_local_chk_v08_gm.py",
             "params": "<검색기준테이블>\n<검색디렉토리>\n<검색결과테이블명>\n[--mid <MID목록>]\n[--db]\n[--conf <경로>]\n[--where <old/new>]\n[--chk <default/encdec_no/all>]",
-            "param_desc": "- <검색결과테이블명>: 분석 결과를 적재할 DB 테이블명 (필수)\n- --chk: 암호화/복호화 필터 조건 ('all' 조건 추가)\n(나머지는 v06과 동일)",
+            "param_desc": "- <검색결과테이블명>: 분석 결과를 적재할 DB 테이블명 (필수)\n- --chk: 암복호화 필터 조건 ('all' 조건 추가)\n(나머지는 v06과 동일)",
             "opt_desc": "- --chk: 'all' 지정 시 default와 encdec_no의 분석 결과를 각각 분리 생성하여 적재\n- <검색결과테이블명>: 대상 결과 테이블명을 파라미터로 직접 지정",
-            "features": "v07_gm을 계승하고 암호화 검증이 추가된 최종 버전. default 분리 CSV 내 동일 라인에 [컬럼명], [암복호화 함수], [tobe_enc_key 변환코드(e1~e4)] 동시 존재 여부를 검사하여 OK/NOT OK 판정 및 검증 결과 CSV를 생성함. (17차 보완: 리터럴 상수의 dummy 치환 배제, 비교 대상 칼럼명:변환키 정보를 compare_col1/col2에 추가한 비교 CSV 및 DDL 전용 DB 적재 기능, 스키마 불일치 시 자동 ALTER 컬럼 추가 및 DROP & CREATE 자동 복구 로직 적용. 18차 보완: SQL문 단어 오검출 방지를 위해 then, not, and 등 SQL 예약어를 비교 대상 컬럼 추출 후보에서 배제하고, 복잡한 함수 식 내부의 원본 컬럼과 에일리어스 컬럼 간의 비교 매칭 관계를 추적하는 복합 식 AS/Alias 매핑 보완, IF 조건절 조건 컬럼 오검출 제외 전처리 헬퍼 구현, 그리고 row_number() 함수가 사용된 구문의 비교 대상 자동 제외 적용)"
+            "features": "v07_gm(주석 원본 유지, exclude 테이블 적재 기능 등)을 계승하고 암호화 검증 기능이 추가된 최종 버전. default 분리 CSV 파일 내 동일 라인에 [컬럼명], [암복호화 함수], [tobe_enc_key 변환코드(e1~e4)]의 동시 존재 여부를 검사하여 OK/NOT OK 판정 및 검증 결과 CSV를 생성함."
         },
         {
             "no": 5,
@@ -127,14 +127,14 @@ def create_excel():
             "features": "3차 암호화 대상 검출 최종 프로그램. 검색기준테이블의 column_name 기준으로 중복 없이 기준 칼럼을 추출하여, 소스테이블에 등록된 local_file 파일 소스 전체를 파싱/완전일치 매칭함. vscode_open_cmd에서 [code] 접두사를 제거하여 vscode 이동 명령어를 기록하고, source_file 컬럼을 함께 로드하여 결과 파일 및 DB에 적재함. 매칭 결과가 없는 파일도 ID별로 기본 행(line_number: 1)을 생성하며, 화면 콘솔에는 상위 10개 매칭 결과만 제한 출력함."
         }
     ]
-
+ 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "소스 프로그램 분석 요약"
-
+ 
     # 격자선(GridLines) 표시 설정
     ws.views.sheetView[0].showGridLines = True
-
+ 
     # 1. 스타일 설정
     font_title = Font(name="Malgun Gothic", size=16, bold=True, color="1F4E78")
     font_header = Font(name="Malgun Gothic", size=11, bold=True, color="FFFFFF")
@@ -144,24 +144,24 @@ def create_excel():
     fill_header = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     fill_zebra = PatternFill(start_color="F2F5F9", end_color="F2F5F9", fill_type="solid")
     fill_white = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-
+ 
     border_thin = Border(
         left=Side(style='thin', color='D3D3D3'),
         right=Side(style='thin', color='D3D3D3'),
         top=Side(style='thin', color='D3D3D3'),
         bottom=Side(style='thin', color='D3D3D3')
     )
-
+ 
     align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
+ 
     # 2. 타이틀 작성 (A2:F3 병합)
     ws.merge_cells("A2:F3")
     title_cell = ws["A2"]
     title_cell.value = "  ■ 소스 프로그램 매개변수 및 주요 기능 분석 요약"
     title_cell.font = font_title
     title_cell.alignment = Alignment(horizontal="left", vertical="center")
-
+ 
     # 3. 헤더 작성 (5행)
     headers = ["No", "프로그램명", "파라미터", "파라미터 내용", "옵션 설명", "주요 기능"]
     header_row = 5
@@ -172,15 +172,15 @@ def create_excel():
         cell.fill = fill_header
         cell.alignment = align_center
         cell.border = border_thin
-
+ 
     ws.row_dimensions[header_row].height = 30
-
+ 
     # 4. 데이터 본문 작성 (6행부터)
     start_row = 6
     for idx, row_data in enumerate(data):
         current_row = start_row + idx
         fill_color = fill_zebra if idx % 2 == 1 else fill_white
-
+ 
         # No
         c_no = ws.cell(row=current_row, column=1, value=row_data["no"])
         c_no.alignment = align_center
@@ -205,7 +205,7 @@ def create_excel():
         # 주요 기능
         c_feat = ws.cell(row=current_row, column=6, value=row_data["features"])
         c_feat.alignment = align_left
-
+ 
         # 모든 셀에 폰트, 테두리, 채우기 적용
         for col_idx in range(1, 7):
             cell = ws.cell(row=current_row, column=col_idx)
@@ -213,10 +213,10 @@ def create_excel():
                 cell.font = font_body
             cell.border = border_thin
             cell.fill = fill_color
-
+ 
         # 행 높이 설정 (가독성을 위해 넉넉하게 지정)
         ws.row_dimensions[current_row].height = 100
-
+ 
     # 5. 열 너비 명시적 지정
     col_widths = {
         "A": 6,   # No
@@ -229,13 +229,13 @@ def create_excel():
     
     for col_letter, width in col_widths.items():
         ws.column_dimensions[col_letter].width = width
-
+ 
     # 파일 저장
-    output_filename = "소스프로그램_분석_요약_20260628.xlsx"
+    output_filename = "소스프로그램_분석_요약.xlsx"
     output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), output_filename)
     wb.save(output_path)
     print(f"[SUCCESS] 엑셀 파일이 정상적으로 생성되었습니다:\n -> {output_path}")
     return output_path
-
+ 
 if __name__ == "__main__":
     create_excel()
