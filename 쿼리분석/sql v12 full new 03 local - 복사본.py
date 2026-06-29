@@ -1,127 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================
-# sql_v12_full_new_02_local.py
+# sql_v12_full_new_03_local.py
 #
 # ■ 버전 이력
 # ─────────────────────────────────────────────────────────────
 # v001_local (2026-06-12)
 #   [신규] sql_v12_full_new_02.py 의 로컬 실행 버전
-#   - 검색 기준: CSV 파일이 아닌 서버 MySQL 테이블에서 직접 조회
-#   - 소스 탐색 대상: 로컬 또는 마운트된 디렉토리 하위 소스 파일
-#   - 매칭 조건: 조회된 tbl_name + column_name 이 소스 쿼리에 포함되는지 확인
-#   - 결과 출력: 스크립트 하위 out/ 디렉토리에 CSV 파일 생성
-#   - DB 등록:  [--db] 옵션 지정 시 서버 MySQL 테이블에 결과 적재
-#   - 주석 포함 쿼리도 검색 대상에 포함 (preprocess 후 검색)
-#   - line_number: 쿼리 기준이 아닌 소스파일 전체 기준 절대 행번호
-#   - [--mode SIMPLE|DETAIL]: 리니지 출력 방식 선택 (기본: SIMPLE)
-#   - [--db]: 결과를 MySQL 테이블에 적재
-#   - [--conf]: mysql.conf 파일 경로 직접 지정
-#
-# ■ 참조 소스 목록
-# ─────────────────────────────────────────────────────────────
-# sql_find_v001_01.py
-#   - in/ 디렉토리에서 CSV 파일 읽어 검색 단어 추출
-#   - 소스 파일 탐색 및 라인 매칭 로직 참조
-#   - DB 적재 (DROP→CREATE→INSERT) 방식 참조
-#
-# sql_find_v001_01_local.py
-#   - CSV 절대경로로 직접 지정하는 로컬 실행 방식 참조
-#   - out/ 디렉토리에 결과 CSV 저장 방식 참조
-#   - DB 미적재, 파일만 생성하는 구조 참조
-#
-# sql_v12_full_new_02.py
-#   - 소스 파일 파싱(쿼리 추출, CTE, 소스/타겟 테이블 추출) 전체 로직 참조
-#   - 테이블+칼럼 매칭(build_col_match_rows) 로직 참조
-#   - 파일 전체 기준 절대 행번호(matched_line_no) 산출 방식 참조
-#   - MySQL DDL/INSERT 방식(DROP→CREATE→INSERT) 참조
-#   - tobe_enc_key, tobe_enc_rsn 등 CSV 부가 항목 처리 방식 참조
-#
-# ■ 프로그램 설명
-# ─────────────────────────────────────────────────────────────
-# 1) 실행 시 파라미터: 검색대상_디렉토리, 검색기준테이블, [옵션]
-# 2) 서버 MySQL 에서 <검색기준테이블> 전체 데이터 조회
-#    - 조회 칼럼: db_name, tbl_name, column_name, tobe_enc_key, tobe_enc_rsn
-# 3) 조회된 (tbl_name, column_name) 쌍을 검색 기준으로 메모리에 저장
-# 4) 검색대상_디렉토리 하위 소스 파일 (.sql, .hql, .uld, .ld, .sh) 전체 탐색
-# 5) 각 소스 파일에서 쿼리 단위로 추출 (주석 제거 후 검색)
-# 6) 추출한 쿼리의 source/target 테이블 중 tbl_name 과 일치하는 항목 확인
-# 7) tbl_name 일치 + column_name 이 해당 쿼리에 포함(\b단어\b 완전일치) 시 매칭
-# 8) 매칭 결과를 스크립트 하위 out/ 디렉토리에 CSV 로 저장
-# 9) [--db] 옵션 지정 시 서버 MySQL 테이블에 결과 적재 (DROP→CREATE→INSERT)
-#
-# ■ 실행예시
-# ─────────────────────────────────────────────────────────────
-# # SIMPLE 모드 (파일만 생성, DB 미등록)
-# python3 sql_v12_full_new_02_local.py \
-#     D:\source \
-#     enc_target_columns \
-#     --mode SIMPLE
-#
-# # SIMPLE 모드 + DB 등록 (mysql.conf 는 스크립트 디렉토리에서 자동탐색)
-# python3 sql_v12_full_new_02_local.py \
-#     D:\source \
-#     enc_target_columns \
-#     --mode SIMPLE --db
-#
-# # DETAIL 모드 + DB 등록 + mysql.conf 경로 직접 지정
-# python3 sql_v12_full_new_02_local.py \
-#     /NAS/MIDP/DBMSVC/MIDP/SID \
-#     enc_target_columns \
-#     --mode DETAIL --db \
-#     --conf /home/p190872/chksrc/mysql.conf
-#
-# # Linux 서버에서 마운트 경로 대상으로 실행
-# python3 /home/p190872/chksrc/sql_v12_full_new_02_local.py \
-#     /NAS/MIDP/DBMSVC/MIDP/SID \
-#     enc_target_columns \
-#     --mode SIMPLE --db \
-#     --conf /home/p190872/chksrc/mysql.conf
-#
-# ■ 파라미터
-# ─────────────────────────────────────────────────────────────
-# 검색대상_디렉토리 : 소스파일(.sql/.hql/.uld/.ld/.sh) 탐색 루트
-# 검색기준테이블    : MySQL 테이블명 (스키마 포함 가능: schema.tablename)
-#                     조회 칼럼(고정): db_name, tbl_name, column_name,
-#                                      tobe_enc_key, tobe_enc_rsn
-# --mode SIMPLE(기본): CTE 투명 처리, 물리소스 → 타겟만 출력
-# --mode DETAIL       : WITH절 CTE 흐름 포함 출력
-# --db                : 결과 파일 생성 + MySQL DB 등록 (mysql.conf 필요)
-# --conf 경로         : mysql.conf 파일 경로 지정
-#
-# ■ [mysql.conf 파일 예시]
-# ─────────────────────────────────────────────────────────────
-# [mysql]
-# host     = localhost
-# port     = 3306
-# user     = root
-# password = secret
-# database = midp_db
-# charset  = utf8mb4
-#
-# ■ 검색기준테이블 스키마 예시 (MySQL)
-# ─────────────────────────────────────────────────────────────
-# CREATE TABLE enc_target_columns (
-#   id           BIGINT       NOT NULL AUTO_INCREMENT,
-#   db_name      VARCHAR(200) NULL     COMMENT 'DB명',
-#   tbl_name     VARCHAR(500) NOT NULL COMMENT '테이블명',
-#   column_name  VARCHAR(500) NOT NULL COMMENT '칼럼명',
-#   tobe_enc_key VARCHAR(200) NULL     COMMENT '암호화 키',
-#   tobe_enc_rsn VARCHAR(500) NULL     COMMENT '암호화 사유',
-#   PRIMARY KEY (id)
-# );
-#
-# ■ 출력 파일 레이아웃 (out/{프로그램명}_{마지막디렉토리}_{mode}_col_match_{timestamp}.csv)
-# ─────────────────────────────────────────────────────────────
-# id, base_directory, file_name, dir_file, crud_type, sql_type,
-# db_name, tbl_name, column_name, matched_table, matched_column,
-# match_type, line_number, matched_line,
-# tobe_enc_key, tobe_enc_rsn, op_dtm
-#
-# ■ 결과 적재 테이블명 (--db 옵션)
-# ─────────────────────────────────────────────────────────────
-# {프로그램명}_{마지막디렉토리명}_{mode}_col_match
-# 예: sql_v12_full_new_02_local_SID_simple_col_match
+# v002_local (2026-06-29)
+#   - 결과 테이블 명명규칙을 프로그램명이 아닌 p190872_ 접두사 형식으로 고정
+#   - 검색기준 복사본 파일명에 p190872_ 접두사 고정 적용 및 날짜/시간(timestamp) 제거
+#   - 추출한 쿼리 원본 정보 수집 기능 추가:
+#     * 쿼리 원본 보관: 테이블 p190872_{last_dir}_{mode}_sql 및 out/p190872_{last_dir}_{mode}_sql_{timestamp}.csv 생성 및 적재
+#   - MySQL 패킷 및 세션 안정성 보완: 커서 버퍼링(buffered=True) 및 executemany 500건 청크 분할 삽입 적용
 # ===============================================================
 
 import os
@@ -189,6 +80,10 @@ def _mysql_connect(conf: dict):
             "pip install pymysql 또는 pip install mysql-connector-python 을 설치하세요."
         )
 
+def _get_cursor(conn):
+    if _MYSQL_DRIVER == "connector":
+        return conn.cursor(buffered=True)
+    return conn.cursor()
 
 # ============================================================
 # mysql.conf 로드
@@ -224,18 +119,13 @@ def load_mysql_conf(explicit_path=None) -> tuple:
 # 조회 칼럼: db_name, tbl_name, column_name, tobe_enc_key, tobe_enc_rsn
 # ============================================================
 def load_search_pairs_from_db(mysql_conf: dict, ref_table: str) -> tuple:
-    """
-    ref_table 에서 전체 데이터 조회.
-    반환: (list of dict, error_msg)
-    dict 키: db_name, tbl_name, column_name, tobe_enc_key, tobe_enc_rsn
-    """
     pairs = []
     seen  = set()
     conn   = None
     cursor = None
     try:
         conn   = _mysql_connect(mysql_conf)
-        cursor = conn.cursor()
+        cursor = _get_cursor(conn)
 
         # 테이블 존재 여부 확인
         cursor.execute("SHOW TABLES LIKE '%s'" % ref_table.split(".")[-1])
@@ -289,7 +179,7 @@ def load_search_pairs_from_db(mysql_conf: dict, ref_table: str) -> tuple:
 
 
 # ============================================================
-# 결과 적재용 DDL / INSERT SQL
+# 결과 적재용 DDL / INSERT SQL (매칭 결과 테이블)
 # ============================================================
 _DDL_DROP_COL_MATCH = "DROP TABLE IF EXISTS `{table}`;"
 
@@ -347,6 +237,40 @@ COL_MATCH_FIELDNAMES = [
     "op_dtm",
 ]
 
+# ============================================================
+# 결과 적재용 DDL / INSERT SQL (추출 쿼리 원본 테이블)
+# ============================================================
+_DDL_DROP_SQL = "DROP TABLE IF EXISTS `{table}`;"
+
+_DDL_CREATE_SQL = """
+CREATE TABLE `{table}` (
+  `id`              BIGINT        NOT NULL AUTO_INCREMENT    COMMENT '자동증가 PK',
+  `run_id`          VARCHAR(30)   NOT NULL                   COMMENT '실행 타임스탬프(YYYYMMDD_HHMMSS)',
+  `base_directory`  VARCHAR(500)  NOT NULL                   COMMENT '소스파일 디렉토리 경로',
+  `file_name`       VARCHAR(500)  NOT NULL                   COMMENT '파일명',
+  `dir_file`        TEXT          NOT NULL                   COMMENT '소스파일 전체경로',
+  `query_seq`       INT           NOT NULL                   COMMENT '쿼리 일련번호',
+  `start_line_no`   INT           NULL                       COMMENT '쿼리 시작 라인번호',
+  `query_text`      LONGTEXT      NULL                       COMMENT '쿼리 원본 내용',
+  `op_dtm`          DATETIME      NOT NULL                   COMMENT '처리일시',
+  PRIMARY KEY (`id`),
+  KEY `idx_run_id`        (`run_id`),
+  KEY `idx_file`          (`file_name`(191))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='로컬 소스 추출 쿼리 원본 보관';
+"""
+
+_SQL_INSERT_SQL = """
+INSERT INTO `{table}`
+  (run_id, base_directory, file_name, dir_file,
+   query_seq, start_line_no, query_text, op_dtm)
+VALUES
+  (%s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+SQL_FIELDNAMES = [
+    "base_directory", "file_name", "dir_file",
+    "query_seq", "start_line_no", "query_text", "op_dtm"
+]
 
 # ============================================================
 # 동적 테이블명 생성
@@ -355,9 +279,13 @@ def build_col_match_table_name(source_dir: str, mode: str) -> str:
     last_dir = os.path.basename(os.path.normpath(source_dir))
     return "p190872_%s_%s_col_match" % (last_dir, mode.lower())
 
+def build_sql_table_name(source_dir: str, mode: str) -> str:
+    last_dir = os.path.basename(os.path.normpath(source_dir))
+    return "p190872_%s_%s_sql" % (last_dir, mode.lower())
+
 
 # ============================================================
-# DB: DROP → CREATE → INSERT (결과 적재)
+# DB: DROP → CREATE → INSERT (매칭 결과 적재)
 # ============================================================
 def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
                              mysql_conf: dict, source_dir: str, mode: str) -> tuple:
@@ -366,7 +294,7 @@ def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
     cursor = None
     try:
         conn   = _mysql_connect(mysql_conf)
-        cursor = conn.cursor()
+        cursor = _get_cursor(conn)
 
         cursor.execute(_DDL_DROP_COL_MATCH.format(table=table_name))
         conn.commit()
@@ -389,9 +317,68 @@ def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
                 r["tobe_enc_key"],    r["tobe_enc_rsn"],
                 op_dtm,
             ))
+            
         if batch:
-            cursor.executemany(_SQL_INSERT_COL_MATCH.format(table=table_name), batch)
-            conn.commit()
+            # 패킷 에러 방지를 위해 500건씩 청크 분할 삽입
+            chunk_size = 500
+            for i in range(0, len(batch), chunk_size):
+                chunk = batch[i:i+chunk_size]
+                cursor.executemany(_SQL_INSERT_COL_MATCH.format(table=table_name), chunk)
+                conn.commit()
+
+        inserted = len(batch)
+        return inserted, None
+
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        return 0, str(e)
+    finally:
+        if cursor:
+            try: cursor.close()
+            except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
+
+
+# ============================================================
+# DB: DROP → CREATE → INSERT (추출 쿼리 원본 적재)
+# ============================================================
+def db_insert_sql_all(sql_buffer: list, run_id: str, op_dtm: str,
+                      mysql_conf: dict, source_dir: str, mode: str) -> tuple:
+    table_name = build_sql_table_name(source_dir, mode)
+    conn   = None
+    cursor = None
+    try:
+        conn   = _mysql_connect(mysql_conf)
+        cursor = _get_cursor(conn)
+
+        cursor.execute(_DDL_DROP_SQL.format(table=table_name))
+        conn.commit()
+
+        cursor.execute(_DDL_CREATE_SQL.format(table=table_name))
+        conn.commit()
+
+        batch = []
+        for r in sql_buffer:
+            batch.append((
+                run_id,
+                r["base_directory"],  r["file_name"],    r["dir_file"],
+                r["query_seq"],
+                r["start_line_no"],
+                r["query_text"],
+                op_dtm,
+            ))
+            
+        if batch:
+            # 패킷 에러 방지를 위해 500건씩 청크 분할 삽입
+            chunk_size = 500
+            for i in range(0, len(batch), chunk_size):
+                chunk = batch[i:i+chunk_size]
+                cursor.executemany(_SQL_INSERT_SQL.format(table=table_name), chunk)
+                conn.commit()
 
         inserted = len(batch)
         return inserted, None
@@ -412,15 +399,14 @@ def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
 
 # ============================================================
 # CSV 저장 (매칭 결과)
-# out/{프로그램명}_{마지막디렉토리}_{mode}_col_match_{timestamp}.csv
 # ============================================================
 def save_col_match_csv(col_match_buffer: list, source_dir: str,
                        op_dtm: str, mode: str) -> str:
     os.makedirs(OUT_DIR, exist_ok=True)
     last_dir  = os.path.basename(os.path.normpath(source_dir))
     timestamp = op_dtm.replace("-", "").replace(" ", "_").replace(":", "")
-    csv_file  = "%s_%s_%s_col_match_%s.csv" % (
-        PROGRAM_NAME, last_dir, mode.lower(), timestamp
+    csv_file  = "p190872_%s_%s_col_match_%s.csv" % (
+        last_dir, mode.lower(), timestamp
     )
     csv_path  = os.path.join(OUT_DIR, csv_file)
 
@@ -428,6 +414,30 @@ def save_col_match_csv(col_match_buffer: list, source_dir: str,
         writer = csv.DictWriter(f, fieldnames=COL_MATCH_FIELDNAMES)
         writer.writeheader()
         for r in col_match_buffer:
+            row = dict(r)
+            row["op_dtm"] = op_dtm
+            writer.writerow(row)
+
+    return csv_path
+
+
+# ============================================================
+# CSV 저장 (추출 쿼리 원본)
+# ============================================================
+def save_sql_csv(sql_buffer: list, source_dir: str,
+                  op_dtm: str, mode: str) -> str:
+    os.makedirs(OUT_DIR, exist_ok=True)
+    last_dir  = os.path.basename(os.path.normpath(source_dir))
+    timestamp = op_dtm.replace("-", "").replace(" ", "_").replace(":", "")
+    csv_file  = "p190872_%s_%s_sql_%s.csv" % (
+        last_dir, mode.lower(), timestamp
+    )
+    csv_path  = os.path.join(OUT_DIR, csv_file)
+
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=SQL_FIELDNAMES)
+        writer.writeheader()
+        for r in sql_buffer:
             row = dict(r)
             row["op_dtm"] = op_dtm
             writer.writerow(row)
@@ -1089,10 +1099,6 @@ def build_temp_registry(source_dir: str) -> set:
 
 # ============================================================
 # 테이블+칼럼 매칭 로직
-# 조건:
-#   1) 소스/타겟 테이블 중 tbl_name 과 일치 (대소문자 무시)
-#   2) 해당 쿼리 내에 column_name 이 \b단어\b 완전일치로 포함
-# 매칭 시 파일 전체 기준 절대 행번호(line_number) 산출
 # ============================================================
 def build_col_match_rows(
     query_text: str,
@@ -1299,6 +1305,8 @@ def main():
         sys.exit(1)
 
     print("[INFO] 조회 완료: %d 쌍  (tbl_name + column_name 기준 중복 제거)" % len(search_pairs))
+    
+    # 2026-06-29: 화면 출력 기준 목록 주석 처리 완료
     # print("[INFO] 검색 기준 목록:")
     # for idx, pair in enumerate(search_pairs, 1):
     #     print("       %3d. tbl=%-40s col=%-30s enc_key=%s" % (
@@ -1307,13 +1315,12 @@ def main():
     #         pair["column_name"],
     #         pair.get("tobe_enc_key", ""),
     #     ))
-    print("-" * 70)
+    # print("-" * 70)
 
-    # in/ 디렉토리에 검색 기준 복사본 저장
+    # in/ 디렉토리에 검색 기준 복사본 저장 (p190872 접두사 적용 및 날짜/시간 제거)
     os.makedirs(IN_DIR, exist_ok=True)
     last_dir   = os.path.basename(os.path.normpath(src_dir))
-    timestamp  = op_dtm.replace("-", "").replace(" ", "_").replace(":", "")
-    in_csv_name = "%s_%s_search_input_%s.csv" % (PROGRAM_NAME, last_dir, timestamp)
+    in_csv_name = "p190872_%s_search_input.csv" % last_dir
     in_csv_path = os.path.join(IN_DIR, in_csv_name)
     try:
         with open(in_csv_path, "w", newline="", encoding="utf-8-sig") as f:
@@ -1350,6 +1357,7 @@ def main():
     print("[INFO] 소스 파일 탐색 및 쿼리 매칭 시작 ...")
 
     col_match_buffer  = []
+    sql_buffer        = []   # 파싱된 쿼리 원본 보관용 버퍼
     total_files       = 0
     total_queries     = 0
     total_file_lines  = 0
@@ -1368,11 +1376,24 @@ def main():
             total_queries    += len(queries_with_offset)
 
             file_match_cnt = 0
+            query_seq      = 0
             for query, raw_query, query_start_line_no in queries_with_offset:
+                query_seq += 1
                 sql_type  = detect_real_sql_type(query)
                 crud_type = classify_crud_type(sql_type)
                 sources   = extract_sources_recursive(query)
                 targets   = extract_target_tables(query)
+
+                # 파싱된 모든 쿼리 정보를 sql_buffer에 기록
+                sql_buffer.append({
+                    "base_directory": base_directory,
+                    "file_name":      file,
+                    "dir_file":       full_path,
+                    "query_seq":      query_seq,
+                    "start_line_no":  query_start_line_no if query_start_line_no is not None else 1,
+                    "query_text":     raw_query,
+                    "op_dtm":         op_dtm
+                })
 
                 cm_rows = build_col_match_rows(
                     query_text            = raw_query,
@@ -1400,15 +1421,38 @@ def main():
         total_files, ", ".join(sorted(TARGET_EXTENSIONS))))
     print("  - 추출한 쿼리 수   : %8d 건" % total_queries)
     print("  - 총 파일 라인 수  : %8d 줄" % total_file_lines)
-    print("  - 매칭 건수        : %8d 건" % len(col_match_buffer))
+    print("  - 매칭 결과 건수   : %8d 건" % len(col_match_buffer))
+    print("  - 추출 수집 쿼리 수: %8d 건" % len(sql_buffer))
     print("-" * 70)
 
-    if not col_match_buffer:
-        print("[WARN] 매칭된 결과가 없습니다. CSV 및 DB 저장을 건너뜁니다.")
-        print("=" * 70)
-        print(" 로컬 소스 테이블+칼럼 매칭 탐색 완료 (매칭 없음)")
-        print("=" * 70)
-        sys.exit(0)
+    # ── 결과 CSV 저장 ────────────────────────────────────────────────
+    if col_match_buffer:
+        print("[INFO] 매칭 결과 CSV 파일 저장 중 (%s) ..." % OUT_DIR)
+        try:
+            csv_output_path = save_col_match_csv(col_match_buffer, src_dir, op_dtm, mode)
+            print("[INFO] CSV 파일 저장 완료: %s" % csv_output_path)
+            print("  - 저장 레코드 수   : %d 건" % len(col_match_buffer))
+        except Exception as e:
+            print("[ERROR] CSV 저장 실패: %s" % str(e))
+            sys.exit(1)
+    else:
+        print("[WARN] 매칭 결과가 없으나, 프로세스 계속 진행 및 쿼리 원본을 저장합니다.")
+        csv_output_path = "N/A"
+    print("-" * 70)
+
+    # ── 쿼리 원본 CSV 저장 ────────────────────────────────────────────
+    if sql_buffer:
+        print("[INFO] 쿼리 원본 CSV 파일 저장 중 (%s) ..." % OUT_DIR)
+        try:
+            sql_output_path = save_sql_csv(sql_buffer, src_dir, op_dtm, mode)
+            print("[INFO] CSV 파일 저장 완료: %s" % sql_output_path)
+            print("  - 저장 레코드 수   : %d 건" % len(sql_buffer))
+        except Exception as e:
+            print("[ERROR] 쿼리 원본 CSV 저장 실패: %s" % str(e))
+            sys.exit(1)
+    else:
+        sql_output_path = "N/A"
+    print("-" * 70)
 
     # ── 매칭 파일 목록 출력 ──────────────────────────────────────────
     if file_match_counts:
@@ -1417,33 +1461,45 @@ def main():
             print("  - %-60s  (%d 건)" % (fpath, cnt))
         print("-" * 70)
 
-    # ── 결과 CSV 저장 ────────────────────────────────────────────────
-    print("[INFO] 결과 CSV 파일 저장 중 (%s) ..." % OUT_DIR)
-    try:
-        csv_output_path = save_col_match_csv(col_match_buffer, src_dir, op_dtm, mode)
-        print("[INFO] CSV 파일 저장 완료: %s" % csv_output_path)
-        print("  - 저장 레코드 수   : %d 건" % len(col_match_buffer))
-    except Exception as e:
-        print("[ERROR] CSV 저장 실패: %s" % str(e))
-        sys.exit(1)
-    print("-" * 70)
-
     # ── DB 적재 (--db 옵션) ──────────────────────────────────────────
     db_inserted = 0
     db_err_msg  = None
     db_table    = build_col_match_table_name(src_dir, mode)
 
+    db_sql_inserted = 0
+    db_sql_err_msg  = None
+    db_sql_table    = build_sql_table_name(src_dir, mode)
+
     if use_db:
-        print("[INFO] MySQL 테이블 적재 시작: %s.%s ..."
+        print("[INFO] MySQL 매칭 결과 테이블 적재 시작: %s.%s ..."
               % (mysql_conf.get("database"), db_table))
-        db_inserted, db_err_msg = db_insert_col_match_all(
-            col_match_buffer, run_id, op_dtm, mysql_conf, src_dir, mode
-        )
-        if db_err_msg:
-            print("[ERROR] DB 적재 실패: %s" % db_err_msg)
+        if col_match_buffer:
+            db_inserted, db_err_msg = db_insert_col_match_all(
+                col_match_buffer, run_id, op_dtm, mysql_conf, src_dir, mode
+            )
+            if db_err_msg:
+                print("[ERROR] DB 적재 실패: %s" % db_err_msg)
+            else:
+                print("[INFO] DB 적재 완료: %d 건" % db_inserted)
         else:
-            print("[INFO] DB 적재 완료: %d 건" % db_inserted)
+            print("[WARN] 적재할 매칭 결과 데이터가 없습니다.")
         print("-" * 70)
+
+        print("[INFO] MySQL 쿼리 원본 테이블 적재 시작: %s.%s ..."
+              % (mysql_conf.get("database"), db_sql_table))
+        if sql_buffer:
+            db_sql_inserted, db_sql_err_msg = db_insert_sql_all(
+                sql_buffer, run_id, op_dtm, mysql_conf, src_dir, mode
+            )
+            if db_sql_err_msg:
+                print("[ERROR] DB 쿼리 원본 적재 실패: %s" % db_sql_err_msg)
+            else:
+                print("[INFO] DB 쿼리 원본 적재 완료: %d 건" % db_sql_inserted)
+        else:
+            print("[WARN] 적재할 쿼리 데이터가 없습니다.")
+        print("-" * 70)
+    else:
+        print("[INFO] --db 옵션이 지정되지 않아 DB 적재는 생략되었습니다.")
 
     # ── 최종 결과 요약 ───────────────────────────────────────────────
     print("=" * 70)
@@ -1458,16 +1514,26 @@ def main():
     print("  추출 쿼리 수         : %d 건" % total_queries)
     print("  총 파일 라인 수      : %d 줄" % total_file_lines)
     print("  매칭 결과 건수       : %d 건" % len(col_match_buffer))
-    print("  저장 CSV 파일        : %s" % csv_output_path)
+    print("  추출 수집 쿼리 수    : %d 건" % len(sql_buffer))
+    print("  저장 매칭 CSV 파일   : %s" % csv_output_path)
+    print("  저장 쿼리 CSV 파일   : %s" % sql_output_path)
     print("-" * 70)
     if use_db:
         if db_err_msg:
-            print("  DB 적재              : 실패")
-            print("  DB 오류 내용         : %s" % db_err_msg)
+            print("  DB 매칭 적재         : 실패")
+            print("  DB 매칭 오류 내용    : %s" % db_err_msg)
         else:
-            print("  DB 적재              : 성공")
-            print("  DB 테이블            : %s.%s" % (mysql_conf.get("database"), db_table))
-            print("  DB 적재 건수         : %d 건" % db_inserted)
+            print("  DB 매칭 적재         : 성공")
+            print("  DB 매칭 테이블       : %s.%s" % (mysql_conf.get("database"), db_table))
+            print("  DB 매칭 적재 건수    : %d 건" % db_inserted)
+        
+        if db_sql_err_msg:
+            print("  DB 쿼리 적재         : 실패")
+            print("  DB 쿼리 오류 내용    : %s" % db_sql_err_msg)
+        else:
+            print("  DB 쿼리 적재         : 성공")
+            print("  DB 쿼리 테이블       : %s.%s" % (mysql_conf.get("database"), db_sql_table))
+            print("  DB 쿼리 적재 건수    : %d 건" % db_sql_inserted)
     else:
         print("  DB 적재              : 생략 (--db 옵션 미지정)")
     print("=" * 70)

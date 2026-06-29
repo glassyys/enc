@@ -353,7 +353,7 @@ COL_MATCH_FIELDNAMES = [
 # ============================================================
 def build_col_match_table_name(source_dir: str, mode: str) -> str:
     last_dir = os.path.basename(os.path.normpath(source_dir))
-    return "p190872_%s_%s_col_match" % (last_dir, mode.lower())
+    return "%s_%s_%s_col_match" % (PROGRAM_NAME, last_dir, mode.lower())
 
 
 # ============================================================
@@ -1299,14 +1299,14 @@ def main():
         sys.exit(1)
 
     print("[INFO] 조회 완료: %d 쌍  (tbl_name + column_name 기준 중복 제거)" % len(search_pairs))
-    # print("[INFO] 검색 기준 목록:")
-    # for idx, pair in enumerate(search_pairs, 1):
-    #     print("       %3d. tbl=%-40s col=%-30s enc_key=%s" % (
-    #         idx,
-    #         pair["tbl_name"],
-    #         pair["column_name"],
-    #         pair.get("tobe_enc_key", ""),
-    #     ))
+    print("[INFO] 검색 기준 목록:")
+    for idx, pair in enumerate(search_pairs, 1):
+        print("       %3d. tbl=%-40s col=%-30s enc_key=%s" % (
+            idx,
+            pair["tbl_name"],
+            pair["column_name"],
+            pair.get("tobe_enc_key", ""),
+        ))
     print("-" * 70)
 
     # in/ 디렉토리에 검색 기준 복사본 저장
