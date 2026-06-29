@@ -78,11 +78,6 @@ def _mysql_connect(conf: dict):
             "MySQL 드라이버가 없습니다. pip install pymysql 또는 mysql-connector-python을 설치하세요."
         )
 
-def _get_cursor(conn):
-    if _MYSQL_DRIVER == "connector":
-        return conn.cursor(buffered=True)
-    return conn.cursor()
-
 # ============================================================
 # mysql.conf 로드
 # ============================================================
@@ -142,7 +137,7 @@ def load_ref_rows_from_db(mysql_conf: dict, ref_table: str, where_opt: str = "al
 
     try:
         conn   = _mysql_connect(mysql_conf)
-        cursor = _get_cursor(conn)
+        cursor = conn.cursor()
 
         # 테이블 존재 여부 확인
         if ref_schema:
@@ -222,7 +217,7 @@ def load_source_files_from_db(mysql_conf: dict, src_table: str) -> tuple:
 
     try:
         conn = _mysql_connect(mysql_conf)
-        cursor = _get_cursor(conn)
+        cursor = conn.cursor()
 
         if src_schema:
             cursor.execute(
@@ -421,7 +416,7 @@ def setup_result_table(mysql_conf: dict, ref_table: str, out_table_name: str) ->
     cursor = None
     try:
         conn = _mysql_connect(mysql_conf)
-        cursor = _get_cursor(conn)
+        cursor = conn.cursor()
         
         cursor.execute("DROP TABLE IF EXISTS %s" % fq_out_table)
         
@@ -467,7 +462,7 @@ def insert_results_to_db(mysql_conf: dict, fq_out_table: str, col_names: list, r
     cursor = None
     try:
         conn = _mysql_connect(mysql_conf)
-        cursor = _get_cursor(conn)
+        cursor = conn.cursor()
         
         cols_str = ", ".join(["`%s`" % col for col in col_names])
         placeholders = ", ".join(["%s"] * len(col_names))
@@ -480,13 +475,8 @@ def insert_results_to_db(mysql_conf: dict, fq_out_table: str, col_names: list, r
                 row_data.append(r.get(col, None))
             batch.append(row_data)
             
-        # max_allowed_packet 및 패킷 꼬임 에러 방지를 위해 500건 단위 청크 분할 executemany 실행
-        chunk_size = 500
-        for i in range(0, len(batch), chunk_size):
-            chunk = batch[i:i + chunk_size]
-            cursor.executemany(sql, chunk)
-            conn.commit()
-            
+        cursor.executemany(sql, batch)
+        conn.commit()
         return len(batch), None
     except Exception as e:
         if conn:

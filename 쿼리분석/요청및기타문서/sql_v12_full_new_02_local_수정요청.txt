@@ -1,0 +1,8 @@
+아래조건 적용하도록 소스 수정요청예정
+
+2. 기준칼럼정보추출
+검색기준테이블에서 칼럼리스트를
+where 기준으로 기준칼럼추출 
+--where old 이면 "where tobe_enc_key <> '' and asis_enc_yn = 'Y'"
+--where new 이면 "where tobe_enc_key <> '' and asis_enc_yn = 'N'"
+--where all 이면 "where tobe_enc_key <> '' 조건으로 조회하도록.
