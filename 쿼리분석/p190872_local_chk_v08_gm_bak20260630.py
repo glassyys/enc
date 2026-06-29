@@ -614,8 +614,6 @@ def check_diff_cols_match(clean_line, matched_cols):
                     return "2) = 비교문 (WHERE/ON)"
 
             # 3) case 문
-            # 가) case when ... then col1 else col2 end
-            # 나) case when ... then ... else col2 end as col3 (공백 alias 포함)
             p3_1_1 = r"\bcase\b.*?then\b.*?\b(?:[a-zA-Z0-9_]+\.)?%s\b.*?\belse\b.*?\b(?:[a-zA-Z0-9_]+\.)?%s\b.*?\bend\b" % (re.escape(col1), re.escape(col2))
             p3_1_2 = r"\bcase\b.*?then\b.*?\b(?:[a-zA-Z0-9_]+\.)?%s\b.*?\belse\b.*?\b(?:[a-zA-Z0-9_]+\.)?%s\b.*?\bend\b" % (re.escape(col2), re.escape(col1))
             
@@ -636,7 +634,6 @@ def check_diff_cols_match(clean_line, matched_cols):
     return None
 
 def remove_if_condition(s):
-    # s 내의 모든 if(cond, val1, val2) 에서 cond를 제거하고 빈 칸으로 치환
     pos = 0
     while True:
         pos = s.lower().find("if(", pos)
@@ -1159,10 +1156,10 @@ def main():
 
         included_results = []
         excluded_results = []
-        diff_cols_results = [] # 13차 추가요청: 서로 다른 컬럼 비교용 결과
+        diff_cols_results = []
         
         seen_matches = set()
-        seen_diff_matches = set() # (filepath, l_num, sorted_cols_str)
+        seen_diff_matches = set()
 
         total_files_scanned = len(files)
         files_with_matches = set()
@@ -1180,10 +1177,8 @@ def main():
             if not queries and raw_content.strip():
                 queries = [{"query_text": raw_content, "query_text_clean": raw_content, "start_line_no": 1}]
 
-            # 동일 파일 내에서 라인별 매칭 정보를 수집하기 위한 임시 맵
-            # (line_number) -> set(col_lower)
             line_to_matched_cols = {}
-            line_info_map = {} # (line_number) -> {"matched_line": l_val, "query_text": raw_query, "clean_l_val": clean_l_val}
+            line_info_map = {}
 
             for q_idx, q_item in enumerate(queries, 1):
                 raw_query = q_item["query_text"]
@@ -1232,7 +1227,6 @@ def main():
                             assoc_tables = sorted(list({r.get("tbl_name") for r in col_to_rows[col_lower] if r.get("tbl_name")}))
                             assoc_tables_str = ", ".join(assoc_tables)
 
-                            # default.encrypt/decrypt 포함 여부 확인
                             has_default_encdec = (
                                 "default.encrypt" in l_val.lower() or 
                                 "default.decrypt" in l_val.lower()
@@ -1240,7 +1234,7 @@ def main():
                             
                             is_pure = is_pure_column(clean_l_val, orig_col_name)
                             if has_default_encdec:
-                                is_pure = False # 제외 방지
+                                is_pure = False
 
                             if is_pure:
                                 exclude_line_count += 1
@@ -1264,7 +1258,6 @@ def main():
                                     excluded_results.append(result_row)
                                 continue
 
-                            # 결과 및 비교 대상만 line_to_matched_cols에 등록
                             if l_num not in line_to_matched_cols:
                                 line_to_matched_cols[l_num] = set()
                             line_to_matched_cols[l_num].add(col_lower)
@@ -1328,22 +1321,17 @@ def main():
                                     })
                                     excluded_results.append(result_row)
 
-            # 13차, 15차 및 16차 추가요청: 쿼리 분석 완료 후 라인 단위로 서로 다른 컬럼 비교 탐색 수행
             for l_num, matched_cols in line_to_matched_cols.items():
                 info = line_info_map[l_num]
-                # 18차 수정보완3: row_number() 가 포함된 행은 비교 대상에서 제외 (오탐 방지)
                 if "row_number" in info["matched_line"].lower():
                     continue
                 clean_l_val = info["clean_l_val"]
                 
-                # 16차 수정요청: is null 단독 구문 및 case when 조건절 전처리 제거
-                # 1) 'is null' 또는 'is not null' 제거
                 clean_l_val = re.sub(
                     r"(?i)\bis\s+(?:not\s+)?null\b",
                     " ",
                     clean_l_val
                 )
-                # 2) case when ... then 구문에서 when 절 조건부만 제거하고 then만 남김
                 clean_l_val = re.sub(
                     r"(?i)\bwhen\b.*?\bthen\b",
                     "then",
@@ -1352,57 +1340,44 @@ def main():
 
                 l_val_lower = info["matched_line"].lower()
                 
-                # default.encrypt/decrypt 함수 껍데기 벗기기 (정규화)
                 norm_l_val = clean_l_val
                 has_default_encdec = "default.encrypt" in l_val_lower or "default.decrypt" in l_val_lower
                 if has_default_encdec:
-                    # 1) 인자가 상수/리터럴인 경우 제외를 위해 'dummy'로 치환 선처리
-                    # default.decrypt(상수) -> 'dummy'
                     norm_l_val = re.sub(
                         r"(?i)default\.decrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*\)",
                         "'dummy'",
                         norm_l_val
                     )
-                    # default.encrypt(상수, key) -> 'dummy'
                     norm_l_val = re.sub(
                         r"(?i)default\.encrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*,\s*[^)]*?\)",
                         "'dummy'",
                         norm_l_val
                     )
-
-                    # 2) 정상적인 컬럼명 인자인 경우 기존 정규화 진행
-                    # default.decrypt(col) -> col 치환
                     norm_l_val = re.sub(
                         r"(?i)default\.decrypt\s*\(\s*([a-zA-Z0-9_.]+)\s*\)",
                         r"\1",
                         norm_l_val
                     )
-                    # default.encrypt(col, key) -> col 치환
                     norm_l_val = re.sub(
                         r"(?i)default\.encrypt\s*\(\s*([a-zA-Z0-9_.]+)\s*,\s*[^)]*?\)",
                         r"\1",
                         norm_l_val
                     )
 
-                # IF 조건절 cond 영역 공백 제거
                 norm_l_val = remove_if_condition(norm_l_val)
                 norm_l_val_lower = norm_l_val.lower()
                 
                 match_type = None
-                matched_pair = None # (col1, col2)
+                matched_pair = None
                 
-                # 1) 일반 13차 비교 규칙 적용 (norm_l_val에 대해 검사)
                 if len(matched_cols) >= 2:
                     match_type = check_diff_cols_match(norm_l_val_lower, matched_cols)
                     if match_type:
                         sorted_cols = sorted(list(matched_cols))
                         matched_pair = (sorted_cols[0], sorted_cols[1])
                 
-                # 2) 15차 예외 및 추가 비교 규칙 적용 (기준테이블 미등록 컬럼과의 비교 검출)
                 if not match_type and len(matched_cols) >= 1:
                     for col_lower in matched_cols:
-                        # 정규화된 norm_l_val 상에서 col_lower 와 비교되는 상대방 컬럼 추적
-                        # (단, 우변/좌변이 숫자, 따옴표 리터럴, null인 경우는 배제)
                         pat_1a = r"\b(?:[a-zA-Z0-9_]+\.)?%s\b\s*(?:=|\!=|<>|>=|<=|>|<|\blike\b)\s*(?!\s*(?:['\"0-9]|null\b))\b([a-zA-Z0-9_.]+)\b" % re.escape(col_lower)
                         pat_1b = r"\b([a-zA-Z0-9_.]+)\b\s*(?:=|\!=|<>|>=|<=|>|<|\blike\b)\s*(?!\s*(?:['\"0-9]|null\b))\b(?:[a-zA-Z0-9_]+\.)?%s\b" % re.escape(col_lower)
                         pat_2 = r"\b(?:[a-zA-Z0-9_]+\.)?%s\b\s+(?:as\s+)?(?!\s*(?:['\"0-9]|null\b))\b([a-zA-Z0-9_.]+)\b" % re.escape(col_lower)
@@ -1422,7 +1397,6 @@ def main():
                             target_col2 = m_2.group(1).strip().lower()
                             match_type = "6) default 암복호화 AS/Alias 문"
                         else:
-                            # 3) 복합 식 AS/Alias 컬럼 매핑 (예: max(...) as alias_col)
                             alias_col = None
                             prefix_part = ""
                             m_as = re.search(r"\bas\s+([a-zA-Z0-9_]+)\b", norm_l_val_lower)
@@ -1443,7 +1417,6 @@ def main():
                         if target_col2:
                             if "." in target_col2:
                                 target_col2 = target_col2.split(".")[-1]
-                            # SQL 예약어 필터링
                             if target_col2 in SQL_KEYWORDS:
                                 target_col2 = None
                                 match_type = None
@@ -1460,7 +1433,6 @@ def main():
                         continue
                     seen_diff_matches.add(diff_key)
                     
-                    # 기준 정보 수집 (기준 테이블에 등록된 컬럼 기준)
                     rep_col = matched_pair[0]
                     if rep_col not in col_to_rows and len(matched_pair) > 1:
                         rep_col = matched_pair[1]
@@ -1470,7 +1442,6 @@ def main():
                         
                     rep_row = col_to_rows[rep_col][0]
                     
-                    # db_name, tbl_name 수집
                     assoc_tbls = set()
                     assoc_dbs = set()
                     for c in matched_pair:
@@ -1482,11 +1453,9 @@ def main():
                             if rep_row.get("tbl_name"): assoc_tbls.add(rep_row.get("tbl_name"))
                             if rep_row.get("db_name"): assoc_dbs.add(rep_row.get("db_name"))
                     
-                    # 17차 수정: 비교 첫번째/두번째 칼럼 추출 및 컨버전 정보
                     compare_col1 = ""
                     compare_col2 = ""
                     if len(sorted_pair) >= 2:
-                        # 첫번째 칼럼 정보 구성
                         c1 = sorted_pair[0]
                         if c1 in col_to_rows:
                             orig_c1 = col_to_rows[c1][0]["column_name"]
@@ -1498,7 +1467,6 @@ def main():
                         else:
                             compare_col1 = "%s:99" % c1
                             
-                        # 두번째 칼럼 정보 구성
                         c2 = sorted_pair[1]
                         if c2 in col_to_rows:
                             orig_c2 = col_to_rows[c2][0]["column_name"]
