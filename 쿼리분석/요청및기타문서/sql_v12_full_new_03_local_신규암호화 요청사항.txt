@@ -103,3 +103,68 @@ sql_v12_full_new_03_local.py
 tbl_name 값이 소스테이블이나 타겟테이블 목록에 있고 
 cols 분리값이 기준칼럼값이 대소문자 구분없이 query_text에 포함된 행이 있으면
 결과 추출되도록 수정
+
+sql_v12_full_new_03_local.py
+실행시 아래 오류가 나는 부분 해결한 수정버전
+Packet sequence number wrong = got 1 expected 2
+
+말씀하신 Packet sequence number wrong = got 1 expected 2 오류는 PyMySQL(또는 mysql-connector)을 사용할 때 이전 쿼리의 결과 셋을 완전히 읽어 들이지 않은 상태
+(버퍼에 남은 데이터가 있는 상태)에서 다음 쿼리를 실행하려고 할 때 발생하는 전형적인 패킷 꼬임 현상 해결한 수정소스코드를 분석해서 패킷 꼬임 현상의 근본 원인을 파악하고 수정하겠습니다.Analyze the code for packet sequence issuesAnalyze the code for packet sequence issues코드는 문서로 받았으니 바로 분석해서 수정하겠습니다. 패킷 꼬임의 원인은 세 군데입니다.
+원인 1 — load_search_pairs_from_db()에서 SHOW TABLES LIKE ... → SHOW COLUMNS FROM ... → SELECT ... 세 쿼리를 같은 커서로 연속 실행하면서 이전 결과셋이 완전히 소비되지 않을 때 발생
+원인 2 — SHOW TABLES LIKE '%s' 에 % 포맷팅 사용 → PyMySQL이 파라미터로 오인해 이스케이프 오작동 가능
+원인 3 — connector 모드에서 buffered=True 커서를 전체 공유하는 대신, 쿼리별로 커서를 새로 발급하지 않아 잔여 결과셋이 남음명령 4개 실행함, 파일 조회함, 파일 생성됨명령 4개 실행함, 파일 조회함, 파일 생성됨v003_local 수정 내용 요약
+패킷 꼬임의 근본 원인은 커서를 재사용하면서 이전 결과셋이 소비되지 않은 채 다음 쿼리가 실행되는 것입니다. 세 개의 헬퍼 함수로 이를 완전히 차단했습니다.
+
+추가된 헬퍼 3종 (96~147행)
+함수역할_new_cursor(conn)드라이버별 올바른 커서 생성 — connector는 buffered=True 강제_exec_query(conn, sql, params)새 커서로 실행 → fetchall() → 즉시 cursor.close()_exec_many(conn, sql, data)새 커서로 executemany() → 즉시 cursor.close()
+pymysql에서 cursor.close()를 호출하면 서버 측 잔여 패킷을 강제로 소비(drain)하기 때문에 다음 쿼리 실행 전 소켓이 항상 깨끗한 상태가 됩니다.
+
+변경된 함수별 수정 포인트
+load_search_pairs_from_db() — 가장 큰 원인이었던 곳
+
+기존: 하나의 커서로 SHOW TABLES → SHOW COLUMNS → SELECT 를 순서대로 실행
+수정: 세 쿼리를 각각 _exec_query() 로 분리 → 매번 새 커서, 즉시 닫기
+추가: SHOW TABLES LIKE '%s' % ref_table (문자열 포맷팅) → execute(sql, (bare_table,)) 파라미터 바인딩으로 변경 (pymysql이 %를 파라미터 마커로 오인하는 문제 동시 해결)
+
+db_insert_col_match_all() / db_insert_sql_all()
+
+기존: 단일 커서로 DROP → CREATE → 500건 청크 루프 전체 처리
+수정: DDL은 _exec_query(), 청크 INSERT는 _exec_many() — 매 호출마다 새 커서, 즉시 닫기
+
+제거된 것
+
+_get_cursor() 함수 전체 제거 (커서를 오래 유지하는 패턴의 원천)
+
+
+
+
+
+--where  조건을 아래와 같이 수정한 전체소스
+--where old 이면 "where tobe_enc_key <> '' and asis_enc_yn = 'Y'"
+--where new 이면 "where tobe_enc_key <> '' and asis_enc_yn = 'N'"
+옵션이 없으면 "where tobe_enc_key <> ''" 조건으로 조회하도록 변경요청합니다.
+
+② load_search_pairs_from_db() — WHERE 절 동적 적용
+where_opt=None  → WHERE `tobe_enc_key` <> ''
+where_opt='OLD' → WHERE `tobe_enc_key` <> '' AND `asis_enc_yn` = 'Y'
+where_opt='NEW' → WHERE `tobe_enc_key` <> '' AND `asis_enc_yn` = 'N'
+
+그럼 추출된
+_sql 로 끝나는 테이블에서
+같은소스 내에 query_text 내용에서
+"검색기준 쌍 수"에 해당하는 내용중
+source 와 target중 tbl_name과 일치하고
+이 조건을 만족하면서 
+동일한 소스내 query_text 내용에서
+기준칼럼(column_name)이 있으면
+해당 소스정보와 "검색기준 쌍 수"와
+전체소스기준 매칭라인의 라인번호와 내용을 추출하고
+vs코드에서 조회가능하도록
+"code -g dir_file:1" 값도 항목 추가하여 
+파일생성 및 테이블 등록하도록 소스수정한 전체소스 부탁
+
+
+
+
+
+
