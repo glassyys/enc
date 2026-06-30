@@ -52,7 +52,7 @@ def _detect_mysql_driver():
 
 _detect_mysql_driver()
 
-def _mysql_connect(conf: dict):
+def _mysql_connect(conf):
     host     = conf.get("host",     "localhost")
     port     = int(conf.get("port", 3306))
     user     = conf.get("user",     "")
@@ -78,10 +78,15 @@ def _mysql_connect(conf: dict):
             "MySQL 드라이버가 없습니다. pip install pymysql 또는 mysql-connector-python을 설치하세요."
         )
 
+def _get_cursor(conn):
+    if _MYSQL_DRIVER == "connector":
+        return conn.cursor(buffered=True)
+    return conn.cursor()
+
 # ============================================================
 # mysql.conf 로드
 # ============================================================
-def load_mysql_conf(explicit_path=None) -> tuple:
+def load_mysql_conf(explicit_path=None):
     path = explicit_path if explicit_path else os.path.join(os.getcwd(), "mysql.conf")
     path = os.path.abspath(path)
     if not os.path.isfile(path):
@@ -111,13 +116,13 @@ def load_mysql_conf(explicit_path=None) -> tuple:
 # ============================================================
 # 유틸리티 함수
 # ============================================================
-def split_schema_table(full_table: str) -> tuple:
+def split_schema_table(full_table):
     parts = full_table.split('.')
     if len(parts) == 2:
         return parts[0].strip(), parts[1].strip()
     return None, full_table.strip()
 
-def make_fq(schema: str, table: str) -> str:
+def make_fq(schema, table):
     if schema:
         return "`%s`.`%s`" % (schema, table)
     return "`%s`" % table
@@ -125,7 +130,7 @@ def make_fq(schema: str, table: str) -> str:
 # ============================================================
 # DB 테이블 조회 로직
 # ============================================================
-def load_ref_rows_from_db(mysql_conf: dict, ref_table: str, where_opt: str = "all") -> tuple:
+def load_ref_rows_from_db(mysql_conf, ref_table, where_opt="all"):
     """
     검색기준테이블에서 조건에 따라 기준칼럼추출 정보를 가져옵니다.
     """
@@ -137,7 +142,7 @@ def load_ref_rows_from_db(mysql_conf: dict, ref_table: str, where_opt: str = "al
 
     try:
         conn   = _mysql_connect(mysql_conf)
-        cursor = conn.cursor()
+        cursor = _get_cursor(conn)
 
         # 테이블 존재 여부 확인
         if ref_schema:
@@ -205,7 +210,7 @@ def load_ref_rows_from_db(mysql_conf: dict, ref_table: str, where_opt: str = "al
             try: conn.close()
             except Exception: pass
 
-def load_source_files_from_db(mysql_conf: dict, src_table: str) -> tuple:
+def load_source_files_from_db(mysql_conf, src_table):
     """
     검색기준소스테이블에서 local_file 및 id, mid를 중복없이 가져옵니다.
     """
@@ -217,7 +222,7 @@ def load_source_files_from_db(mysql_conf: dict, src_table: str) -> tuple:
 
     try:
         conn = _mysql_connect(mysql_conf)
-        cursor = conn.cursor()
+        cursor = _get_cursor(conn)
 
         if src_schema:
             cursor.execute(
@@ -285,7 +290,7 @@ def load_source_files_from_db(mysql_conf: dict, src_table: str) -> tuple:
 # ============================================================
 # 소스 파싱 및 주석 제거
 # ============================================================
-def preprocess(content: str) -> str:
+def preprocess(content):
     """
     전처리: 주석 제거 및 문자열 리터럴의 길이 보존
     """
@@ -312,7 +317,7 @@ def preprocess(content: str) -> str:
 
     return content
 
-def convert_key_to_code(col_key: str) -> str:
+def convert_key_to_code(col_key):
     if not col_key:
         return ""
     k_lower = col_key.strip().lower()
@@ -326,7 +331,7 @@ def convert_key_to_code(col_key: str) -> str:
         return "e" + m.group(1)
     return col_key
 
-def extract_queries_from_text(raw: str) -> list:
+def extract_queries_from_text(raw):
     """
     소스 내 DML/DDL 및 EXECUTE IMMEDIATE문 단독 검출
     """
@@ -381,7 +386,7 @@ def extract_queries_from_text(raw: str) -> list:
         
     return queries
 
-def open_and_extract_queries(source_file_path: str) -> tuple:
+def open_and_extract_queries(source_file_path):
     try:
         with open(source_file_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
@@ -391,7 +396,7 @@ def open_and_extract_queries(source_file_path: str) -> tuple:
     except Exception as e:
         return [], str(e), [], ""
 
-def strip_comments(line: str) -> str:
+def strip_comments(line):
     """
     매칭 대상 라인의 주석 문자 뒤 영역을 제거
     """
@@ -404,7 +409,7 @@ def strip_comments(line: str) -> str:
 # ============================================================
 # 결과 테이블 동적 구성 및 DDL
 # ============================================================
-def setup_result_table(mysql_conf: dict, ref_table: str, out_table_name: str) -> tuple:
+def setup_result_table(mysql_conf, ref_table, out_table_name):
     """
     요청하신 3차 레이아웃에 맞추어 결과 테이블을 자동 생성합니다.
     """
@@ -416,7 +421,7 @@ def setup_result_table(mysql_conf: dict, ref_table: str, out_table_name: str) ->
     cursor = None
     try:
         conn = _mysql_connect(mysql_conf)
-        cursor = conn.cursor()
+        cursor = _get_cursor(conn)
         
         cursor.execute("DROP TABLE IF EXISTS %s" % fq_out_table)
         
@@ -454,7 +459,7 @@ def setup_result_table(mysql_conf: dict, ref_table: str, out_table_name: str) ->
         if cursor: cursor.close()
         if conn: conn.close()
 
-def insert_results_to_db(mysql_conf: dict, fq_out_table: str, col_names: list, results: list) -> tuple:
+def insert_results_to_db(mysql_conf, fq_out_table, col_names, results):
     if not results:
         return 0, None
     
@@ -462,7 +467,7 @@ def insert_results_to_db(mysql_conf: dict, fq_out_table: str, col_names: list, r
     cursor = None
     try:
         conn = _mysql_connect(mysql_conf)
-        cursor = conn.cursor()
+        cursor = _get_cursor(conn)
         
         cols_str = ", ".join(["`%s`" % col for col in col_names])
         placeholders = ", ".join(["%s"] * len(col_names))
@@ -475,8 +480,13 @@ def insert_results_to_db(mysql_conf: dict, fq_out_table: str, col_names: list, r
                 row_data.append(r.get(col, None))
             batch.append(row_data)
             
-        cursor.executemany(sql, batch)
-        conn.commit()
+        # max_allowed_packet 및 패킷 꼬임 에러 방지를 위해 500건 단위 청크 분할 executemany 실행
+        chunk_size = 500
+        for i in range(0, len(batch), chunk_size):
+            chunk = batch[i:i + chunk_size]
+            cursor.executemany(sql, chunk)
+            conn.commit()
+            
         return len(batch), None
     except Exception as e:
         if conn:
@@ -490,7 +500,7 @@ def insert_results_to_db(mysql_conf: dict, fq_out_table: str, col_names: list, r
 # ============================================================
 # CSV 저장 모듈
 # ============================================================
-def save_csv(rows: list, filepath: str, fieldnames: list, op_dtm: str):
+def save_csv(rows, filepath, fieldnames, op_dtm):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
