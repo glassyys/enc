@@ -1,0 +1,19 @@
+D:\workspace\enc\쿼리분석\p190872_local_chk_v08_3cha_no_omit.py
+
+p190872_local_chk_v08_3cha_no_omit.py 로직 문의
+추출 column_name 대상이 현재 log_id와 sss_id 가 있는데
+"[예제]" 쿼리에 대해
+log_id로 아래 행이 추출
+sss_id로는 추출이 안되는 것 같은데 이 현재 로직인지?
+
+[예제]
+nvl(log_id, '*') sss_id 
+
+1차 추가요청
+확인해보니 nvl(log_id, '*') sss_id 이 케이스가
+제외 CSV 파일로 저장되었는데
+제외되는 내용은 주석 이외에는 없고
+파일생성에 포함하여
+대상을 no_omit로 끝나는 결과테이블에 등록되도록 수정
+
+

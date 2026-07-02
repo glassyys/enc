@@ -1,7 +1,13 @@
-D:\workspace\enc\쿼리분석\Sql v12 full new 02 local.py
+D:\workspace\enc\쿼리분석\sql_v12_full_new_03_local.py
 
-파일명은 sql v12 full new 03 local.py으로 생성
+파일명은 sql_v12_full_new_04_local.py으로 생성
+1. where 옵션 로직 적용
+p190872_local_chk_v08_gm.py
+옵션중 where 옵션 조건에 따른 쿼리결과를 추출하되 
+해당 결과는 tbl_name와 column_name 조합 중복제거된 값을 추출해서
+별도 파일에 저장후 테이블도 저장합니다.
+2. 1에서 저장한 tbl_name와 column_name정보 이용 매칭자료 조회
 
-검색기준복사본 저장파일도 p190872_시작하고 앞에 프로그램명은 삭제한 파일명으로 변경
-뒤에 생성일자_시간도 없는 파일명으로 생성하도록 수정
-추출한 쿼리정보를 파일로 생성및 테이블생성하여 저장하도록 소스 수정
+생성한 DB쿼리테이블 에서 query_text 에서
+1에서 저장한 tbl_name와 column_name를 
+각 행별로 순환하여 모두 매칭되는 자료를 조회한 후 파일생성후 테이블 등록하는 소스로 수정

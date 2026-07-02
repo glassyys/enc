@@ -288,32 +288,21 @@ def load_source_files_from_db(mysql_conf, src_table):
 def preprocess_only_comments(content):
     """
     주석만 마스킹 처리 (블록 주석 /* ... */, 한 줄 주석 -- 및 #)
-    문자열 리터럴 내부의 '--' 및 '#' 은 보호하여 오동작 방지
     줄 수 유지를 위해 블록 주석 내부의 \n(줄바꿈)은 보존
     """
-    pattern = re.compile(
-        r"('(?:[^'\\]|\\.)*')|(\"(?:[^\"\\]|\\.)*\")|(/\*.*?\*/)|((?:--|#)[^\r\n]*)",
-        re.DOTALL
-    )
+    # 1. 블록 주석 (/* ... */) 공백 치환 (줄바꿈 보존)
+    def repl_block(m):
+        text = m.group(0)
+        return "".join('\n' if c == '\n' else ' ' for c in text)
+    content = re.sub(r"/\*.*?\*/", repl_block, content, flags=re.DOTALL)
 
-    def repl(m):
-        # 홑따옴표 문자열 리터럴 매칭인 경우 그대로 보존
-        if m.group(1) is not None:
-            return m.group(1)
-        # 쌍따옴표 문자열 리터럴 매칭인 경우 그대로 보존
-        if m.group(2) is not None:
-            return m.group(2)
-        # 블록 주석 매칭인 경우 줄바꿈 유지하며 공백 치환
-        if m.group(3) is not None:
-            text = m.group(3)
-            return "".join('\n' if c == '\n' else ' ' for c in text)
-        # 한 줄 주석 매칭인 경우 공백 치환
-        if m.group(4) is not None:
-            text = m.group(4)
-            return " " * len(text)
-        return m.group(0)
+    # 2. 한 줄 주석 (--, #) 공백 치환
+    def repl_line(m):
+        text = m.group(0)
+        return " " * len(text)
+    content = re.sub(r"(?:--|#)[^\r\n]*", repl_line, content)
 
-    return pattern.sub(repl, content)
+    return content
 
 def open_source_file(source_file_path):
     """
@@ -728,17 +717,6 @@ def main():
     print("[INFO] 제외 CSV 저장 처리 중: %s" % omit_csv_filepath)
     save_csv(omit_results, omit_csv_filepath, col_names, op_dtm)
     print("[INFO] 제외 CSV 파일 저장 완료.")
-
-    # 6.4 대상 컬럼 리스트 CSV 파일 저장
-    target_cols_filename = "%s_target_cols.csv" % out_table_name
-    target_cols_filepath = os.path.join(out_dir, target_cols_filename)
-    print("[INFO] 대상 컬럼 CSV 저장 처리 중: %s" % target_cols_filepath)
-    target_fields = []
-    if unique_ref_rows:
-        target_fields = list(unique_ref_rows[0].keys())
-    save_csv(unique_ref_rows, target_cols_filepath, target_fields, op_dtm)
-    print("[INFO] 대상 컬럼 CSV 파일 저장 완료.")
-
 
     # 6.5 화면 출력 내용 파일로 생성
     print_filename = "%s_print.txt" % out_table_name
