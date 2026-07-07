@@ -384,3 +384,21 @@ old 처리하는 것처럼
 midp_all_new 명칭으로 변경해서 생성하도록 수정
 아마 파일명은 그렇게 생성되었을 것입니다.
 
+19차 수정요청
+다른 출력문과 주석등 소스 내용은 유지하고   diff 결과파일생성부분 수정
+1."default.encrypt"와 "default.decrypt" 가 있는 경우 
+compare_col1, compare_col2 칼럼에 추출되지 않고 해당단어 제외하고 
+다른 칼럼비교가 되는 경우만  추출되도록 수정
+2. cast 문의  as 뒤 단어는 compare_col1,compare_col2 로 추출하지 않도록 수정
+  예시) "as int", "as decimal(10,1)", as string, as char 등등 
+  예시처럼 cast 구문만 있고 비교용칼럼이  then 뒤에 한개만 추출된다면 그 자료는 파일생성 안하도록 수정
+3. nvl(cast(col1 as int), '')  col2 인 경우도  col1 과 col2 가 비교대상으로 추출되도록 수정
+4. nvl(cast(col1 as int), '') as col2 인경우는  col1 과 col2 가 비교대상으로 추출되도록 수정
+5. and col <> default.encrypt('#', 'e2') 이런식으로 문자만 비교되는 경우는 제외하고
+   and col1 <> default.encrypt(col2, 'e2') 이런식으로 서로다른 칼럼명이 비교되는 경우는 칼럼이 다르니 추출하도록 수정
+
+수정파일명을 p190872_local_chk_v09_gm.py 으로 생성
+
+19차 수정요청보완
+as  뒤 칼럼을  현재 compare_col1에 등록하고있는데
+compare_col2 에 추출되고 as 앞 칼럼이 compare_col1에 등록되도록 수정요청
