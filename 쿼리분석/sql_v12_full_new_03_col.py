@@ -380,6 +380,7 @@ def resolve_and_split_schema_table(full_name: str) -> tuple:
 _DDL_CREATE = """
 CREATE TABLE IF NOT EXISTS `{table}` (
   `id`           BIGINT        NOT NULL AUTO_INCREMENT,
+  `mid`          VARCHAR(200)  NOT NULL  COMMENT '검색대상 디렉토리 마지막 디렉토리명',
   `run_id`       VARCHAR(30)   NOT NULL  COMMENT '실행 타임스탬프(YYYYMMDD_HHMMSS)',
   `base_directory` VARCHAR(500) NOT NULL COMMENT '소스파일 디렉토리 경로',
   `file_name`    VARCHAR(500)  NOT NULL  COMMENT '파일명',
@@ -407,7 +408,7 @@ CREATE TABLE IF NOT EXISTS `{table}` (
 
 _SQL_INSERT = """
 INSERT INTO `{table}`
-  (run_id, base_directory, file_name, dir_file,
+  (mid, run_id, base_directory, file_name, dir_file,
    crud_type, sql_type,
    source_table, source_type,
    target_table, target_type,
@@ -416,7 +417,7 @@ INSERT INTO `{table}`
    tgt_schema, tgt_table,
    op_dtm)
 VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 # ============================================================
@@ -425,6 +426,7 @@ VALUES
 _DDL_CREATE_QUERY_TEXT = """
 CREATE TABLE IF NOT EXISTS `{table}` (
   `id`             BIGINT        NOT NULL AUTO_INCREMENT,
+  `mid`            VARCHAR(200)  NOT NULL COMMENT '검색대상 디렉토리 마지막 디렉토리명',
   `base_directory` VARCHAR(500)  NOT NULL COMMENT '소스파일 디렉토리 경로',
   `file_name`      VARCHAR(500)  NOT NULL COMMENT '파일명',
   `dir_file`       TEXT          NOT NULL COMMENT '소스파일 전체경로',
@@ -440,10 +442,10 @@ CREATE TABLE IF NOT EXISTS `{table}` (
 
 _SQL_INSERT_QUERY_TEXT = """
 INSERT INTO `{table}`
-  (base_directory, file_name, dir_file,
+  (mid, base_directory, file_name, dir_file,
    crud_type, sql_type, query_text, op_dtm)
 VALUES
-  (%s, %s, %s, %s, %s, %s, %s)
+  (%s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 # ============================================================
@@ -452,6 +454,7 @@ VALUES
 _DDL_CREATE_COL_MATCH = """
 CREATE TABLE IF NOT EXISTS `{table}` (
   `id`              BIGINT        NOT NULL AUTO_INCREMENT,
+  `mid`             VARCHAR(200)  NOT NULL  COMMENT '검색대상 디렉토리 마지막 디렉토리명',
   `run_id`          VARCHAR(30)   NOT NULL  COMMENT '실행 타임스탬프(YYYYMMDD_HHMMSS)',
   `base_directory`  VARCHAR(500)  NOT NULL  COMMENT '소스파일 디렉토리 경로',
   `file_name`       VARCHAR(500)  NOT NULL  COMMENT '파일명',
@@ -482,7 +485,7 @@ CREATE TABLE IF NOT EXISTS `{table}` (
 
 _SQL_INSERT_COL_MATCH = """
 INSERT INTO `{table}`
-  (run_id, base_directory, file_name, dir_file,
+  (mid, run_id, base_directory, file_name, dir_file,
    crud_type, sql_type, target_table,
    matched_table, matched_column,
    tbl_name, column_name,
@@ -490,7 +493,7 @@ INSERT INTO `{table}`
    match_type, matched_line_no, matched_line,
    op_dtm)
 VALUES
-  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+  (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 
@@ -498,8 +501,7 @@ VALUES
 # 동적 테이블명 생성
 # ============================================================
 def build_dynamic_table_name(source_dir: str, mode: str) -> str:
-    last_dir = os.path.basename(os.path.abspath(source_dir))
-    return "%s_%s_%s" % (RESULT_TABLE_PREFIX, last_dir, mode.lower())
+    return "%s_all_%s" % (RESULT_TABLE_PREFIX, mode.lower())
 
 
 def build_query_text_table_name(source_dir: str, mode: str) -> str:
@@ -516,7 +518,7 @@ def build_col_match_table_name(source_dir: str, mode: str) -> str:
 # DB: DROP → CREATE → INSERT  (기존 리니지 테이블)
 # ============================================================
 def db_insert_all(rows_buffer: list, run_id: str, op_dtm: str,
-                  mysql_conf: dict, source_dir: str, mode: str) -> tuple:
+                  mysql_conf: dict, source_dir: str, mode: str, mid: str) -> tuple:
     table_name = build_dynamic_table_name(source_dir, mode)
     conn   = None
     cursor = None
@@ -529,14 +531,23 @@ def db_insert_all(rows_buffer: list, run_id: str, op_dtm: str,
 
         conn   = _mysql_connect(mysql_conf)
         cursor = conn.cursor()
-        cursor.execute("DROP TABLE IF EXISTS `%s`" % table_name)
-        conn.commit()
-        cursor.execute(_DDL_CREATE.format(table=table_name))
-        conn.commit()
+        cursor.execute("SHOW TABLES LIKE %s", (table_name,))
+        table_exists = cursor.fetchone() is not None
+        if not table_exists:
+            cursor.execute(_DDL_CREATE.format(table=table_name))
+            conn.commit()
+        else:
+            cursor.execute("SHOW COLUMNS FROM `%s` LIKE 'mid'" % table_name)
+            if cursor.fetchone() is None:
+                cursor.execute("ALTER TABLE `%s` ADD COLUMN `mid` VARCHAR(200) NULL COMMENT '검색대상 디렉토리 마지막 디렉토리명'" % table_name)
+                conn.commit()
+            cursor.execute("DELETE FROM `%s` WHERE `mid` = %%s" % table_name, (mid,))
+            conn.commit()
 
         batch = []
         for r in rows_buffer:
             batch.append((
+                r.get("mid", mid),
                 run_id,
                 r["base_directory"], r["file_name"], r["dir_file"],
                 r["crud_type"],      r["sql_type"],
@@ -551,7 +562,7 @@ def db_insert_all(rows_buffer: list, run_id: str, op_dtm: str,
             cursor.executemany(_SQL_INSERT.format(table=table_name), batch)
             conn.commit()
         inserted = len(batch)
-        print("[INFO] MySQL 리니지 테이블 DROP→재생성→적재 완료: %s (%d건)" % (table_name, inserted))
+        print("[INFO] MySQL 리니지 테이블 생성/갱신 완료: %s (%d건, mid=%s)" % (table_name, inserted, mid))
         return inserted, None
     except Exception as e:
         if conn:
@@ -574,7 +585,7 @@ def db_insert_all(rows_buffer: list, run_id: str, op_dtm: str,
 # DB: DROP → CREATE → INSERT  (기존: 쿼리 텍스트 테이블)
 # ============================================================
 def db_insert_query_text_all(query_text_buffer: list, op_dtm: str,
-                              mysql_conf: dict, source_dir: str, mode: str) -> tuple:
+                              mysql_conf: dict, source_dir: str, mode: str, mid: str) -> tuple:
     table_name = build_query_text_table_name(source_dir, mode)
     conn   = None
     cursor = None
@@ -587,14 +598,23 @@ def db_insert_query_text_all(query_text_buffer: list, op_dtm: str,
 
         conn   = _mysql_connect(mysql_conf)
         cursor = conn.cursor()
-        cursor.execute("DROP TABLE IF EXISTS `%s`" % table_name)
-        conn.commit()
-        cursor.execute(_DDL_CREATE_QUERY_TEXT.format(table=table_name))
-        conn.commit()
+        cursor.execute("SHOW TABLES LIKE %s", (table_name,))
+        table_exists = cursor.fetchone() is not None
+        if not table_exists:
+            cursor.execute(_DDL_CREATE_QUERY_TEXT.format(table=table_name))
+            conn.commit()
+        else:
+            cursor.execute("SHOW COLUMNS FROM `%s` LIKE 'mid'" % table_name)
+            if cursor.fetchone() is None:
+                cursor.execute("ALTER TABLE `%s` ADD COLUMN `mid` VARCHAR(200) NULL COMMENT '검색대상 디렉토리 마지막 디렉토리명'" % table_name)
+                conn.commit()
+            cursor.execute("DELETE FROM `%s` WHERE `mid` = %%s" % table_name, (mid,))
+            conn.commit()
 
         batch = []
         for r in query_text_buffer:
             batch.append((
+                r.get("mid", mid),
                 r["base_directory"], r["file_name"], r["dir_file"],
                 r["crud_type"],      r["sql_type"],
                 r["query_text"],     op_dtm,
@@ -603,7 +623,7 @@ def db_insert_query_text_all(query_text_buffer: list, op_dtm: str,
             cursor.executemany(_SQL_INSERT_QUERY_TEXT.format(table=table_name), batch)
             conn.commit()
         inserted = len(batch)
-        print("[INFO] MySQL 쿼리텍스트 테이블 DROP→재생성→적재 완료: %s (%d건)" % (table_name, inserted))
+        print("[INFO] MySQL 쿼리텍스트 테이블 생성/갱신 완료: %s (%d건, mid=%s)" % (table_name, inserted, mid))
         return inserted, None
     except Exception as e:
         if conn:
@@ -626,7 +646,7 @@ def db_insert_query_text_all(query_text_buffer: list, op_dtm: str,
 # DB: DROP → CREATE → INSERT  (신규: 칼럼 매칭 결과 테이블)
 # ============================================================
 def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
-                             mysql_conf: dict, source_dir: str, mode: str) -> tuple:
+                             mysql_conf: dict, source_dir: str, mode: str, mid: str) -> tuple:
     table_name = build_col_match_table_name(source_dir, mode)
     conn   = None
     cursor = None
@@ -639,14 +659,23 @@ def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
 
         conn   = _mysql_connect(mysql_conf)
         cursor = conn.cursor()
-        cursor.execute("DROP TABLE IF EXISTS `%s`" % table_name)
-        conn.commit()
-        cursor.execute(_DDL_CREATE_COL_MATCH.format(table=table_name))
-        conn.commit()
+        cursor.execute("SHOW TABLES LIKE %s", (table_name,))
+        table_exists = cursor.fetchone() is not None
+        if not table_exists:
+            cursor.execute(_DDL_CREATE_COL_MATCH.format(table=table_name))
+            conn.commit()
+        else:
+            cursor.execute("SHOW COLUMNS FROM `%s` LIKE 'mid'" % table_name)
+            if cursor.fetchone() is None:
+                cursor.execute("ALTER TABLE `%s` ADD COLUMN `mid` VARCHAR(200) NULL COMMENT '검색대상 디렉토리 마지막 디렉토리명'" % table_name)
+                conn.commit()
+            cursor.execute("DELETE FROM `%s` WHERE `mid` = %%s" % table_name, (mid,))
+            conn.commit()
 
         batch = []
         for r in col_match_buffer:
             batch.append((
+                r.get("mid", mid),
                 run_id,
                 r["base_directory"],  r["file_name"],    r["dir_file"],
                 r["crud_type"],       r["sql_type"],
@@ -663,7 +692,7 @@ def db_insert_col_match_all(col_match_buffer: list, run_id: str, op_dtm: str,
             cursor.executemany(_SQL_INSERT_COL_MATCH.format(table=table_name), batch)
             conn.commit()
         inserted = len(batch)
-        print("[INFO] MySQL 칼럼매칭 테이블 DROP→재생성→적재 완료: %s (%d건)" % (table_name, inserted))
+        print("[INFO] MySQL 칼럼매칭 테이블 생성/갱신 완료: %s (%d건, mid=%s)" % (table_name, inserted, mid))
         return inserted, None
     except Exception as e:
         if conn:
@@ -1421,7 +1450,7 @@ def build_rows(cte_map, sources_raw, targets, crud_type, sql_type,
 # CSV 저장 (리니지)
 # ============================================================
 FIELDNAMES = [
-    "base_directory", "file_name", "dir_file",
+    "mid", "base_directory", "file_name", "dir_file",
     "crud_type", "sql_type",
     "source_table", "source_type",
     "target_table", "target_type",
@@ -1452,7 +1481,7 @@ def save_csv(rows_buffer: list, source_dir: str, op_dtm: str) -> str:
 # CSV 저장 (칼럼 매칭 결과)
 # ============================================================
 COL_MATCH_FIELDNAMES = [
-    "base_directory", "file_name", "dir_file",
+    "mid", "base_directory", "file_name", "dir_file",
     "crud_type", "sql_type",
     "target_table",
     "matched_table",  "matched_column",
@@ -1609,6 +1638,8 @@ def main():
     in_csv_path = save_search_csv_to_in(search_pairs, SOURCE_DIR, op_dtm)
     print("[INFO] 검색용 파일 저장: %s" % in_csv_path)
 
+    mid = os.path.basename(os.path.normpath(SOURCE_DIR))
+
     # 칼럼 정규표현식 미리 컴파일 (성능 최적화)
     compiled_col_patterns = {}
     for pair in search_pairs:
@@ -1683,6 +1714,7 @@ def main():
 
                 # 쿼리 텍스트 버퍼
                 query_text_buffer.append({
+                    "mid":            mid,
                     "base_directory": base_directory,
                     "file_name":      file,
                     "dir_file":       full_path,
@@ -1699,6 +1731,8 @@ def main():
                         base_directory, file, full_path,
                         MODE, cte_upper, temp_registry,
                     )
+                    for row in rows:
+                        row["mid"] = mid
                     rows_buffer.extend(rows)
                     total_rows += len(rows)
 
@@ -1723,6 +1757,8 @@ def main():
                     matched_source_files.add(full_path)
                 curr_files_cnt = len(matched_source_files)
 
+                for row in cm_rows:
+                    row["mid"] = mid
                 col_match_buffer.extend(cm_rows)
 
                 for limit in range(((prev_files_cnt // 100) + 1) * 100, (curr_files_cnt // 100) * 100 + 1, 100):
@@ -1768,17 +1804,17 @@ def main():
         if rows_buffer:
             print("\n[INFO] MySQL 리니지 테이블 적재 시작 ...")
             db_inserted, db_err = db_insert_all(
-                rows_buffer, run_id, op_dtm, mysql_conf, SOURCE_DIR, MODE
+                rows_buffer, run_id, op_dtm, mysql_conf, SOURCE_DIR, MODE, mid
             )
         if query_text_buffer:
             print("[INFO] MySQL 쿼리 텍스트 테이블 적재 시작 ...")
             db_qt_inserted, db_qt_err = db_insert_query_text_all(
-                query_text_buffer, op_dtm, mysql_conf, SOURCE_DIR, MODE
+                query_text_buffer, op_dtm, mysql_conf, SOURCE_DIR, MODE, mid
             )
         if col_match_buffer:
             print("[INFO] MySQL 칼럼 매칭 테이블 적재 시작 ...")
             db_cm_inserted, db_cm_err = db_insert_col_match_all(
-                col_match_buffer, run_id, op_dtm, mysql_conf, SOURCE_DIR, MODE
+                col_match_buffer, run_id, op_dtm, mysql_conf, SOURCE_DIR, MODE, mid
             )
 
     # ── 결과 요약 출력 ───────────────────────────────────────────────
