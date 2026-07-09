@@ -141,13 +141,6 @@ SQL_KEYWORDS = {
     "forall", "execute", "immediate", "using", "out", "inout", "returning"
 }
 
-SQL_TYPE_TOKENS = {
-    "numeric", "numaric", "integer", "int", "smallint", "bigint", "decimal", "number", "string",
-    "double", "float", "real", "varchar", "varchar2", "char", "character", "date",
-    "timestamp", "datetime", "time", "boolean", "bool", "blob", "clob", "text", "json",
-    "binary", "varbinary", "bytea", "tinyint", "mediumint", "long", "short"
-}
-
 # ============================================================
 # MySQL 드라이버 동적 로드
 # ============================================================
@@ -640,7 +633,6 @@ def normalize_diff_expression(expr):
         return expr
 
     normalized = strip_cast_expressions(expr)
-    normalized = re.sub(r"(?i)\s*::\s*[a-zA-Z0-9_]+", "", normalized)
 
     normalized = re.sub(
         r"(?i)default\.decrypt\s*\(\s*([a-zA-Z0-9_.]+)\s*\)",
@@ -664,49 +656,6 @@ def normalize_diff_expression(expr):
     )
 
     return normalized.strip()
-
-
-def is_default_encdec_token(token):
-    if not token:
-        return False
-    token = token.strip().lower()
-    return token.startswith("default.encrypt") or token.startswith("default.decrypt") or token in {"encrypt", "decrypt"}
-
-
-def is_real_compare_column_token(token):
-    if not token:
-        return False
-
-    normalized = token.strip()
-    if not normalized:
-        return False
-
-    normalized = normalized.strip("'\"")
-    if not normalized:
-        return False
-
-    if normalized.lower() in {"dummy", "null", "true", "false"}:
-        return False
-
-    if is_default_encdec_token(normalized):
-        return False
-
-    if normalized in SQL_TYPE_TOKENS or normalized in SQL_KEYWORDS:
-        return False
-
-    if re.fullmatch(r"[0-9]+", normalized):
-        return False
-
-    if re.fullmatch(r"[\W_]+", normalized):
-        return False
-
-    if re.search(r"[\u3131-\u318E\uAC00-\uD7A3]", normalized):
-        return False
-
-    if re.search(r"[^a-zA-Z0-9_]", normalized):
-        return False
-
-    return True
 
 
 def check_diff_cols_match(clean_line, matched_cols):
@@ -788,72 +737,25 @@ def remove_if_condition(s):
 def normalize_compare_token(token: str):
     if not token:
         return None
-
     token = token.strip().lower()
-    token = re.sub(r"(?i)\s*::\s*[a-zA-Z0-9_]+", "", token)
     if "." in token:
         token = token.split(".")[-1]
-    token = re.sub(r"[^a-zA-Z0-9_]+", "", token)
-
-    if not token:
+    if not token or token in SQL_KEYWORDS:
         return None
-
-    if token in SQL_KEYWORDS or token in SQL_TYPE_TOKENS:
-        return None
-
-    if re.search(r"^(?:decimal|int|string|numeric|numaric|varchar|char|date|timestamp|datetime|time|boolean|bool|blob|clob|text|json|binary|varbinary|bytea|tinyint|smallint|mediumint|bigint|float|double|real|long|short)$", token):
-        return None
-
-    if re.fullmatch(r"[0-9]+", token):
-        return None
-
-    if re.fullmatch(r"[\W_]+", token):
-        return None
-
-    if re.search(r"[\u3131-\u318E\uAC00-\uD7A3]", token):
-        return None
-
     return token
 
 
-def find_matched_columns_in_expression(expr, matched_cols, exclude_cols=None):
-    if not expr or not matched_cols:
-        return []
-
-    exclude_set = set(exclude_cols or [])
-    candidates = []
-    for token in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z0-9_]+)?\b", expr):
-        normalized = normalize_compare_token(token)
-        if not normalized:
-            continue
-        if normalized in exclude_set:
-            continue
-        if normalized not in matched_cols:
-            continue
-        if normalized not in candidates:
-            candidates.append(normalized)
-    return candidates
-
-
 def extract_ordered_pair_from_equal_expression(norm_l_val_lower: str):
-    # 비교식은 좌변/우변 순서를 그대로 유지해야 함
-    norm_l_val_lower = re.sub(r"(?i)\s*::\s*[a-zA-Z0-9_]+", "", norm_l_val_lower)
+    # '=' 구문은 좌변/우변 순서를 그대로 유지해야 함
+    m = re.search(r"\b([a-zA-Z0-9_.]+)\b\s*=\s*(?!['\"0-9]|null\b)\b([a-zA-Z0-9_.]+)\b", norm_l_val_lower)
+    if not m:
+        return None
 
-    m = re.search(r"\b([a-zA-Z0-9_.]+)\b\s*(?:=|!=|<>|>=|<=|>|<|\blike\b|\bin\b)\s*(?!['\"0-9]|null\b)\b([a-zA-Z0-9_.]+)\b", norm_l_val_lower)
-    if m:
-        left_col = normalize_compare_token(m.group(1))
-        right_col = normalize_compare_token(m.group(2))
-        if left_col and right_col and left_col != right_col:
-            return left_col, right_col
-
-    m_alias = re.search(r"\b([a-zA-Z0-9_.]+)\b\s+(?:as\s+)?\b([a-zA-Z0-9_.]+)\b", norm_l_val_lower)
-    if m_alias:
-        left_col = normalize_compare_token(m_alias.group(1))
-        right_col = normalize_compare_token(m_alias.group(2))
-        if left_col and right_col and left_col != right_col:
-            return left_col, right_col
-
-    return None
+    left_col = normalize_compare_token(m.group(1))
+    right_col = normalize_compare_token(m.group(2))
+    if not left_col or not right_col or left_col == right_col:
+        return None
+    return left_col, right_col
 
 # ============================================================
 # 소스 디렉토리 탐색 및 바이너리 제외
@@ -1563,15 +1465,9 @@ def main():
 
                 eq_pair = extract_ordered_pair_from_equal_expression(norm_l_val_lower)
                 if eq_pair:
-                    left_col = normalize_compare_token(eq_pair[0])
-                    right_col = normalize_compare_token(eq_pair[1])
-                    if left_col and right_col and left_col != right_col:
-                        matched_pair = (left_col, right_col)
-                        if re.search(r"\s*(!=|<>|>=|<=|>|<|\blike\b|\bin\b)\s*", norm_l_val_lower):
-                            match_type = "4) 기타 비교 구문"
-                        else:
-                            match_type = "5) 비교식 (=)"
-                if not match_type:
+                    matched_pair = eq_pair
+                    match_type = "5) 비교식 (=)"
+                else:
                     # 1) 일반 13차 비교 규칙 적용 (norm_l_val에 대해 검사)
                     if len(matched_cols) >= 2:
                         match_type = check_diff_cols_match(norm_l_val_lower, matched_cols)
@@ -1633,30 +1529,17 @@ def main():
                             if target_col2:
                                 if "." in target_col2:
                                     target_col2 = target_col2.split(".")[-1]
-                                if not is_real_compare_column_token(target_col2):
+                                # SQL 예약어 필터링
+                                if target_col2 in SQL_KEYWORDS:
                                     target_col2 = None
                                     match_type = None
-                                else:
-                                    # SQL 예약어 필터링
-                                    if target_col2 in SQL_KEYWORDS:
-                                        target_col2 = None
-                                        match_type = None
-                                    if target_col2 and target_col2 != col_lower:
-                                        matched_pair = (col_lower, target_col2)
-                                        break
-
-                            if not matched_pair and not target_col2:
-                                fallback_cols = find_matched_columns_in_expression(norm_l_val_lower, matched_cols, {col_lower})
-                                if fallback_cols:
-                                    matched_pair = (col_lower, fallback_cols[0])
-                                    match_type = "6) default 암복호화 함수 인자 컬럼"
+                                if target_col2 and target_col2 != col_lower:
+                                    matched_pair = (col_lower, target_col2)
                                     break
 
                 if match_type and matched_pair:
                     # preserve the left-to-right order for compare_col1/compare_col2
                     pair_in_order = list(matched_pair)
-                    if not all(is_real_compare_column_token(c) for c in pair_in_order):
-                        continue
                     # for uniqueness key, keep sorted representation to avoid order variants
                     sorted_cols_str = ", ".join(sorted(pair_in_order))
 

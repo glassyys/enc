@@ -416,3 +416,53 @@ compare_col2에 colB가 등록되로록 수정요청
 그외 "="이 들어간 구문의 경우
 왼쪽칼럼값이 compare_col1에 등록되고
 오른쪽에 있는 값이 compare_col2에 등록되도록 수정요청합니다.
+
+--20260709 p190872_local_chk_v09_gm.py
+추가보완요청 diff파일 생성 추가요청
+1) case1
+when a.col1 > defalut.encrypt('#','aa') and a.col1 = nvl(b.col2, defalut.encrypt('#','aa')) then 'Y'
+이 경우 
+compare_col1에 col1
+compare_col2에 encrypt가 등록되는데
+compare_col2에 col2 등록되도록 수정요청
+이런 스타일은 defalut.encrypt와 defalut.decrypt는 칼럼명으로 추출되지 않아야 합니다.
+
+2) case2
+and a.col1 <> defalut.encrypt('#','aa')
+경우는 diff파일에서 추출에서 제외하면 됩니다.
+compare_col1은 col1이지만
+비교대상에는 defalut.encrypt와 defalut.decrypt 제외하면
+col1에 대한 비교대상의 실제 칼럼명은 없는 것입니다.
+이와 같이 encrypt와 decrypt와 default 는 비교대상 칼럼이이 아니라
+diff  파일에 생성제외입니다.
+수정전 원본은 백업후 수정부탁
+
+추가케이스 수정요청보완
+
+a.col::numaric = b.col2
+이 케이스에 compare_col1에 col1  이 추출되도록 수정
+현재는 numaric이 추출되고 있는데
+이런 데이터 타입은 칼럼명추출에서 제외 하도록 수정
+
+추가케이스 수정요청보완2
+
+cast(a.col1 as decimal)  col1
+인경우 decimal과 col로 다른 칼럼이라고 인지해서  diff파일 생성되었는데
+이런경우는 decimal로 compare_col1에 추출되지 않도록 하고
+
+col1과 col1이 동일한 칼럼명이라  diff 에서 추출제외되고
+
+cast(a.col1 as decimal)  col2
+이런경우는 col1 과 col2 가 다르므로 추출되도록 수정
+추가적으로
+테이블의 칼럼타입 decimal , int, string 등에 대해서는 칼럼으로 인지되지 않도록 수정
+
+= , <> , as 등 모든 비교문의 칼럼추출시
+왼쪽칼럼값이 compare_col1에 등록되도록 수정
+현재 on a.col1 = defalut.decrypt(b.col2)
+인 경우 compare_col1에 col2 값이 추출되고 있습니다.
+
+추가케이스 수정요청보완3
+아래와 같이 비교대상이 0이나 '#'같은 기호로 칼럼명이 아니거나
+한글인 경우는 diff 추출에서 제외도도록 수정
+defalut.encrypt(0 'aa') as col2
