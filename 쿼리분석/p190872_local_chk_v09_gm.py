@@ -89,6 +89,7 @@ import sys
 import csv
 import argparse
 import codecs
+import traceback
 from datetime import datetime
 
 # Python 2.7 ConfigParser 호환성 처리
@@ -1026,82 +1027,118 @@ VALUES
 
 def db_load_table(mysql_conf, fq_table, ddl_create, sql_insert, batch, mid, table_label):
     conn, cursor = None, None
+    batch_size = len(batch) if batch is not None else 0
+    print("[DB_LOAD] [%s] 시작: table=%s, mid=%s, rows=%d" % (table_label, fq_table, mid, batch_size))
     try:
+        print("[DB_LOAD] [%s] MySQL 연결 시도: %s" % (table_label, fq_table))
         conn   = _mysql_connect(mysql_conf)
         cursor = conn.cursor()
+        print("[DB_LOAD] [%s] MySQL 연결 성공" % table_label)
         
+        print("[DB_LOAD] [%s] DDL 실행 시작: %s" % (table_label, fq_table))
         cursor.execute(ddl_create.format(table=fq_table))
         conn.commit()
+        print("[DB_LOAD] [%s] DDL 실행 완료" % table_label)
         
         if "default" in fq_table.lower():
+            print("[DB_LOAD] [%s] default 테이블 컬럼 확인 시작" % table_label)
             cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
             columns = [row[0].lower() for row in cursor.fetchall()]
             if "chk_result" not in columns:
                 try:
+                    print("[DB_LOAD] [%s] chk_result 컬럼 추가 시도" % table_label)
                     cursor.execute("ALTER TABLE %s ADD COLUMN `chk_result` VARCHAR(10) NULL COMMENT '암호화 검증 결과(OK/NOK)' AFTER `query_text`" % fq_table)
                     conn.commit()
                     print("[INFO] 테이블 %s 에 chk_result 컬럼을 자동으로 추가했습니다." % fq_table)
                 except Exception as alter_err:
-                    print("[WARNING] 컬럼 추가 실패 (이미 존재하거나 권한 부족): %s" % str(alter_err))
+                    print("[WARNING] [%s] chk_result 컬럼 추가 실패 (이미 존재하거나 권한 부족): %s" % (table_label, str(alter_err)))
+            else:
+                print("[DB_LOAD] [%s] chk_result 컬럼은 이미 존재함" % table_label)
                     
         if "diff_cols" in fq_table.lower():
+            print("[DB_LOAD] [%s] diff_cols 테이블 컬럼 확인 시작" % table_label)
             cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
             columns = [row[0].lower() for row in cursor.fetchall()]
             if "compare_col1" not in columns:
                 try:
+                    print("[DB_LOAD] [%s] compare_col1 컬럼 추가 시도" % table_label)
                     cursor.execute("ALTER TABLE %s ADD COLUMN `compare_col1` VARCHAR(500) NULL COMMENT '비교첫번째칼럼추출(컬럼명:변환키)' AFTER `tobe_enc_key`" % fq_table)
                     conn.commit()
                     print("[INFO] 테이블 %s 에 compare_col1 컬럼을 자동으로 추가했습니다." % fq_table)
                 except Exception as alter_err:
-                    print("[WARNING] compare_col1 컬럼 추가 실패: %s" % str(alter_err))
+                    print("[WARNING] [%s] compare_col1 컬럼 추가 실패: %s" % (table_label, str(alter_err)))
+            else:
+                print("[DB_LOAD] [%s] compare_col1 컬럼은 이미 존재함" % table_label)
             if "compare_col2" not in columns:
                 try:
+                    print("[DB_LOAD] [%s] compare_col2 컬럼 추가 시도" % table_label)
                     cursor.execute("ALTER TABLE %s ADD COLUMN `compare_col2` VARCHAR(500) NULL COMMENT '비교두번째칼럼추출(컬럼명:변환키)' AFTER `compare_col1`" % fq_table)
                     conn.commit()
                     print("[INFO] 테이블 %s 에 compare_col2 컬럼을 자동으로 추가했습니다." % fq_table)
                 except Exception as alter_err:
-                    print("[WARNING] compare_col2 컬럼 추가 실패: %s" % str(alter_err))
+                    print("[WARNING] [%s] compare_col2 컬럼 추가 실패: %s" % (table_label, str(alter_err)))
+            else:
+                print("[DB_LOAD] [%s] compare_col2 컬럼은 이미 존재함" % table_label)
         
         try:
+            print("[DB_LOAD] [%s] DELETE 실행 시작: table=%s, mid=%s" % (table_label, fq_table, mid))
             cursor.execute("DELETE FROM %s WHERE `mid` = %%s" % fq_table, (mid,))
             conn.commit()
+            print("[DB_LOAD] [%s] DELETE 완료" % table_label)
             
             if batch:
+                print("[DB_LOAD] [%s] INSERT 실행 시작: rows=%d" % (table_label, batch_size))
                 cursor.executemany(sql_insert.format(table=fq_table), batch)
                 conn.commit()
-            print("[INFO] DB 적재 완료 [%s]: %s (DELETE/INSERT mid=%s, %d 건)" % (table_label, fq_table, mid, len(batch)))
+                print("[DB_LOAD] [%s] INSERT 완료" % table_label)
+            else:
+                print("[DB_LOAD] [%s] INSERT 대상이 없어 건너뜁니다." % table_label)
+            print("[INFO] DB 적재 완료 [%s]: %s (DELETE/INSERT mid=%s, %d 건)" % (table_label, fq_table, mid, batch_size))
             return len(batch), None
         except Exception as insert_err:
-            print("[WARNING] 테이블 %s 데이터 적재 실패 (%s). 테이블을 재생성(DROP & CREATE) 후 다시 시도합니다." % (fq_table, str(insert_err)))
+            print("[WARNING] [%s] 테이블 %s 데이터 적재 실패 (%s). 테이블을 재생성(DROP & CREATE) 후 다시 시도합니다." % (table_label, fq_table, str(insert_err)))
+            print("[TRACE] [%s] 적재 실패 상세\n%s" % (table_label, traceback.format_exc()), file=sys.stderr)
             try:
+                print("[DB_LOAD] [%s] 재생성 시도: DROP TABLE %s" % (table_label, fq_table))
                 conn.rollback()
                 cursor.execute("DROP TABLE IF EXISTS %s" % fq_table)
                 conn.commit()
                 
+                print("[DB_LOAD] [%s] 재생성 후 DDL 실행 시작" % table_label)
                 cursor.execute(ddl_create.format(table=fq_table))
                 conn.commit()
+                print("[DB_LOAD] [%s] 재생성 후 DDL 실행 완료" % table_label)
                 
                 if "default" in fq_table.lower():
+                    print("[DB_LOAD] [%s] 재생성 후 default 컬럼 확인" % table_label)
                     cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
                     columns = [row[0].lower() for row in cursor.fetchall()]
                     if "chk_result" not in columns:
                         cursor.execute("ALTER TABLE %s ADD COLUMN `chk_result` VARCHAR(10) NULL COMMENT '암호화 검증 결과(OK/NOK)' AFTER `query_text`" % fq_table)
                         conn.commit()
                 
+                print("[DB_LOAD] [%s] 재생성 후 DELETE 실행 시작" % table_label)
                 cursor.execute("DELETE FROM %s WHERE `mid` = %%s" % fq_table, (mid,))
                 conn.commit()
+                print("[DB_LOAD] [%s] 재생성 후 DELETE 완료" % table_label)
                 
                 if batch:
+                    print("[DB_LOAD] [%s] 재생성 후 INSERT 실행 시작: rows=%d" % (table_label, batch_size))
                     cursor.executemany(sql_insert.format(table=fq_table), batch)
                     conn.commit()
-                print("[INFO] 테이블 재생성 후 DB 적재 완료 [%s]: %s (DELETE/INSERT mid=%s, %d 건)" % (table_label, fq_table, mid, len(batch)))
+                    print("[DB_LOAD] [%s] 재생성 후 INSERT 완료" % table_label)
+                else:
+                    print("[DB_LOAD] [%s] 재생성 후 INSERT 대상이 없어 건너뜁니다." % table_label)
+                print("[INFO] 테이블 재생성 후 DB 적재 완료 [%s]: %s (DELETE/INSERT mid=%s, %d 건)" % (table_label, fq_table, mid, batch_size))
                 return len(batch), None
             except Exception as retry_err:
-                print("[ERROR] 테이블 재생성 후 DB 적재 역시 실패하였습니다: %s" % str(retry_err), file=sys.stderr)
+                print("[ERROR] [%s] 테이블 재생성 후 DB 적재 역시 실패하였습니다: %s" % (table_label, str(retry_err)), file=sys.stderr)
+                print("[TRACE] [%s] 재생성 후 실패 상세\n%s" % (table_label, traceback.format_exc()), file=sys.stderr)
                 raise retry_err
                 
     except Exception as e:
         print("[ERROR] DB 적재 실패 [%s]: %s" % (table_label, str(e)), file=sys.stderr)
+        print("[TRACE] [%s] DB 적재 실패 상세\n%s" % (table_label, traceback.format_exc()), file=sys.stderr)
         if conn:
             try: conn.rollback()
             except Exception: pass
@@ -1781,25 +1818,30 @@ def main():
 
         if args.db:
             if included_results:
+                print("[DB_LOAD] 결과데이터 적재 시작: mid=%s, rows=%d" % (mid, len(included_results)))
                 batch_all = build_db_batch(included_results, run_id, mid, op_dtm, include_chk_result=False)
                 db_load_table(mysql_conf, fq_out_table, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_all, mid, "결과데이터")
 
                 if args.chk == "all":
                     fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
+                    print("[DB_LOAD] 결과데이터_default 적재 시작: mid=%s, rows=%d" % (mid, len(results_default)))
                     batch_default = build_db_batch(results_default, run_id, mid, op_dtm, include_chk_result=True)
                     db_load_table(mysql_conf, fq_out_table_default, _DDL_CREATE_RESULT_DEFAULT, _SQL_INSERT_RESULT_DEFAULT, batch_default, mid, "결과데이터_default")
                     
                     fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
+                    print("[DB_LOAD] 결과데이터_encdec_no 적재 시작: mid=%s, rows=%d" % (mid, len(results_encdec_no)))
                     batch_encdec_no = build_db_batch(results_encdec_no, run_id, mid, op_dtm, include_chk_result=False)
                     db_load_table(mysql_conf, fq_out_table_encdec_no, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_encdec_no, mid, "결과데이터_encdec_no")
             
             if excluded_results:
                 fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
+                print("[DB_LOAD] 제외데이터 적재 시작: mid=%s, rows=%d" % (mid, len(excluded_results)))
                 batch_exclude = build_db_batch(excluded_results, run_id, mid, op_dtm, include_chk_result=False)
                 db_load_table(mysql_conf, fq_out_table_exclude, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_exclude, mid, "제외데이터")
 
             if diff_cols_results:
                 fq_out_table_diff_cols = make_fq(out_schema, out_tbl_only + "_diff_cols")
+                print("[DB_LOAD] 비교데이터(diff_cols) 적재 시작: mid=%s, rows=%d" % (mid, len(diff_cols_results)))
                 batch_diff_cols = build_db_batch_diff_cols(diff_cols_results, run_id, mid, op_dtm)
                 db_load_table(mysql_conf, fq_out_table_diff_cols, _DDL_CREATE_DIFF_COLS, _SQL_INSERT_DIFF_COLS, batch_diff_cols, mid, "비교데이터(diff_cols)")
 
