@@ -466,3 +466,6 @@ cast(a.col1 as decimal)  col2
 아래와 같이 비교대상이 0이나 '#'같은 기호로 칼럼명이 아니거나
 한글인 경우는 diff 추출에서 제외도도록 수정
 defalut.encrypt(0 'aa') as col2
+
+chk_result 칼럼 없으면 추가하는 부분 제거
+현재 칼럼이 존재함
