@@ -707,8 +707,7 @@ def main():
 
     # 5. 결과 테이블 설정 및 DB 생성
     _, src_tbl_only = split_schema_table(args.src_table)
-    # --where 옵션값을 결과 테이블명 및 결과 파일명에 포함하도록 변경
-    out_table_name = f"{src_tbl_only}_no_omit_{args.where}"
+    out_table_name = "%s_no_omit" % src_tbl_only
     print("[INFO] 결과 테이블 자동 구성 중: %s ..." % out_table_name)
     col_names, fq_out_table, setup_err = setup_result_table(mysql_conf, args.ref_table, out_table_name)
     if setup_err:

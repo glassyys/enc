@@ -17,3 +17,5 @@ nvl(log_id, '*') sss_id
 대상을 no_omit로 끝나는 결과테이블에 등록되도록 수정
 
 
+이 소스 백업후(D:\workspace\enc\쿼리분석\p190872_local_chk_v08_3cha_no_omit.py)
+실행시 결과파일명과 테이블을 "--where aaa" 값이라면 aaa 를 결과파일명과 결과테이블명에 추가하도록 소스수정
