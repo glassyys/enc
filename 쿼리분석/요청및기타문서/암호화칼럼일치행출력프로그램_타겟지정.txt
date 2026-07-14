@@ -469,3 +469,5 @@ defalut.encrypt(0 'aa') as col2
 
 chk_result 칼럼 없으면 추가하는 부분 제거
 현재 칼럼이 존재함
+
+concat(regexp_replace(col,'(.{1})(.{1})(.*)','$1**$3'),'(',col2,')')
