@@ -1,12 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ===============================================================
-# p190872_local_chk_v09_gm.py (2026-07-14 수정)
+# p190872_local_chk_v08_gm.py(20260628 - 17차 수정)
 #
 # [수정 사항 요약]
-#   - 2026-07-14 추가 수정:
-#     * 처리일시(op_dtm)를 검색기준테이블에 등록된 해당 컬럼의 최종작업일시(물리컬럼: 최종작업일시/last_work_dtm/upd_dtm 등) 기준으로 반영되도록 수정.
-#     * 기준테이블에 최종작업일시 컬럼이 존재하지 않거나 값이 없을 경우 fallback으로 프로그램의 실행 시각(datetime.now())을 사용하도록 구현.
 #   - Python 2.7.5 호환성 전면 적용: 
 #     * 모든 타입 힌팅 제거
 #     * codecs.open() 사용으로 인코딩 오류 방지
@@ -275,25 +272,12 @@ def load_ref_rows_from_db(mysql_conf, ref_table, where_opt=None):
         cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
         existing_cols = {row[0].lower() for row in cursor.fetchall()}
 
-        # 최종작업일시 컬럼에 해당하는 컬럼 확인 (대소문자 및 영문 명칭 대조)
-        work_dtm_col = None
-        for candidate in ["최종작업일시", "last_work_dtm", "upd_dtm", "update_dtm", "modify_dtm", "upd_date"]:
-            if candidate.lower() in existing_cols:
-                work_dtm_col = candidate
-                break
-
         select_parts = []
         for col in REF_TABLE_COLS:
             if col in existing_cols:
                 select_parts.append("`%s`" % col)
             else:
                 select_parts.append("NULL AS `%s`" % col)
-
-        # 최종작업일시 컬럼 추가 바인딩 (SELECT 목록의 가장 마지막)
-        if work_dtm_col:
-            select_parts.append("`%s` AS `최종작업일시`" % work_dtm_col)
-        else:
-            select_parts.append("NULL AS `최종작업일시`")
 
         # 2차수정요청 조건 적용
         where_conds = []
@@ -317,10 +301,6 @@ def load_ref_rows_from_db(mysql_conf, ref_table, where_opt=None):
             for idx, col in enumerate(REF_TABLE_COLS):
                 val = db_row[idx]
                 row_dict[col] = str(val).strip() if val is not None else ""
-            
-            # 최종작업일시를 row_dict에 삽입
-            val_dtm = db_row[len(REF_TABLE_COLS)]
-            row_dict["최종작업일시"] = str(val_dtm).strip() if val_dtm is not None else ""
             rows.append(row_dict)
 
         return rows, ref_schema, ref_tbl_only, None
@@ -806,7 +786,7 @@ def remove_if_condition(s):
     return s
 
 
-def normalize_compare_token(token: str):
+def normalize_compare_token(token):
     if not token:
         return None
 
@@ -856,7 +836,7 @@ def find_matched_columns_in_expression(expr, matched_cols, exclude_cols=None):
     return candidates
 
 
-def extract_ordered_pair_from_equal_expression(norm_l_val_lower: str):
+def extract_ordered_pair_from_equal_expression(norm_l_val_lower):
     # 비교식은 좌변/우변 순서를 그대로 유지해야 함
     norm_l_val_lower = re.sub(r"(?i)\s*::\s*[a-zA-Z0-9_]+", "", norm_l_val_lower)
 
@@ -1060,7 +1040,21 @@ def db_load_table(mysql_conf, fq_table, ddl_create, sql_insert, batch, mid, tabl
         conn.commit()
         print("[DB_LOAD] [%s] DDL 실행 완료" % table_label)
         
-
+        if "default" in fq_table.lower():
+            print("[DB_LOAD] [%s] default 테이블 컬럼 확인 시작" % table_label)
+            cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
+            columns = [row[0].lower() for row in cursor.fetchall()]
+            if "chk_result" not in columns:
+                try:
+                    print("[DB_LOAD] [%s] chk_result 컬럼 추가 시도" % table_label)
+                    cursor.execute("ALTER TABLE %s ADD COLUMN `chk_result` VARCHAR(10) NULL COMMENT '암호화 검증 결과(OK/NOK)' AFTER `query_text`" % fq_table)
+                    conn.commit()
+                    print("[INFO] 테이블 %s 에 chk_result 컬럼을 자동으로 추가했습니다." % fq_table)
+                except Exception as alter_err:
+                    print("[WARNING] [%s] chk_result 컬럼 추가 실패 (이미 존재하거나 권한 부족): %s" % (table_label, str(alter_err)))
+            else:
+                print("[DB_LOAD] [%s] chk_result 컬럼은 이미 존재함" % table_label)
+                    
         if "diff_cols" in fq_table.lower():
             print("[DB_LOAD] [%s] diff_cols 테이블 컬럼 확인 시작" % table_label)
             cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
@@ -1115,7 +1109,14 @@ def db_load_table(mysql_conf, fq_table, ddl_create, sql_insert, batch, mid, tabl
                 conn.commit()
                 print("[DB_LOAD] [%s] 재생성 후 DDL 실행 완료" % table_label)
                 
-
+                if "default" in fq_table.lower():
+                    print("[DB_LOAD] [%s] 재생성 후 default 컬럼 확인" % table_label)
+                    cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
+                    columns = [row[0].lower() for row in cursor.fetchall()]
+                    if "chk_result" not in columns:
+                        cursor.execute("ALTER TABLE %s ADD COLUMN `chk_result` VARCHAR(10) NULL COMMENT '암호화 검증 결과(OK/NOK)' AFTER `query_text`" % fq_table)
+                        conn.commit()
+                
                 print("[DB_LOAD] [%s] 재생성 후 DELETE 실행 시작" % table_label)
                 cursor.execute("DELETE FROM %s WHERE `mid` = %%s" % fq_table, (mid,))
                 conn.commit()
@@ -1162,10 +1163,7 @@ def save_csv(rows, filepath, fieldnames, op_dtm):
         writer.writeheader()
         for r in rows:
             row = dict(r)
-            row_op_dtm = row.get("op_dtm", "").strip()
-            if not row_op_dtm or row_op_dtm.upper() == "NONE":
-                row_op_dtm = op_dtm
-            row["op_dtm"] = row_op_dtm
+            row["op_dtm"] = op_dtm
             utf8_row = {}
             for k, v in row.items():
                 if isinstance(v, unicode):
@@ -1180,10 +1178,7 @@ def save_csv(rows, filepath, fieldnames, op_dtm):
             writer.writeheader()
             for r in rows:
                 row = dict(r)
-                row_op_dtm = row.get("op_dtm", "").strip()
-                if not row_op_dtm or row_op_dtm.upper() == "NONE":
-                    row_op_dtm = op_dtm
-                row["op_dtm"] = row_op_dtm
+                row["op_dtm"] = op_dtm
                 writer.writerow(row)
 
 def to_int(v):
@@ -1195,13 +1190,9 @@ def to_int(v):
         return None
 
 def build_db_batch(results, run_id, mid, op_dtm, include_chk_result=False):
-    batch = []
-    for r in results:
-        r_op_dtm = r.get("op_dtm", "").strip()
-        if not r_op_dtm or r_op_dtm.upper() == "NONE":
-            r_op_dtm = op_dtm
-        if include_chk_result:
-            batch.append((
+    if include_chk_result:
+        return [
+            (
                 run_id,
                 mid,
                 r.get("db_name"),
@@ -1219,10 +1210,13 @@ def build_db_batch(results, run_id, mid, op_dtm, include_chk_result=False):
                 r.get("vscode_open_cmd"),
                 r.get("query_text"),
                 r.get("chk_result", ""),
-                r_op_dtm
-            ))
-        else:
-            batch.append((
+                op_dtm
+            )
+            for r in results
+        ]
+    else:
+        return [
+            (
                 run_id,
                 mid,
                 r.get("db_name"),
@@ -1239,17 +1233,14 @@ def build_db_batch(results, run_id, mid, op_dtm, include_chk_result=False):
                 r.get("matched_line"),
                 r.get("vscode_open_cmd"),
                 r.get("query_text"),
-                r_op_dtm
-            ))
-    return batch
+                op_dtm
+            )
+            for r in results
+        ]
 
 def build_db_batch_diff_cols(results, run_id, mid, op_dtm):
-    batch = []
-    for r in results:
-        r_op_dtm = r.get("op_dtm", "").strip()
-        if not r_op_dtm or r_op_dtm.upper() == "NONE":
-            r_op_dtm = op_dtm
-        batch.append((
+    return [
+        (
             run_id,
             mid,
             r.get("db_name"),
@@ -1268,30 +1259,26 @@ def build_db_batch_diff_cols(results, run_id, mid, op_dtm):
             r.get("matched_line"),
             r.get("vscode_open_cmd"),
             r.get("query_text"),
-            r_op_dtm
-        ))
-    return batch
+            op_dtm
+        )
+        for r in results
+    ]
 
 # ============================================================
 # MAIN
 # ============================================================
 def main():
     parser = argparse.ArgumentParser(description="Query Analyzer Script (v08_gm - 17차 수정)")
-    parser.add_argument("ref_table", nargs='?', default="my_db.my_ref_table", help="검색기준테이블")
-    parser.add_argument("search_dir", nargs='?', default="D:\\workspace\\enc", help="검색디렉토리")
-    parser.add_argument("out_table", nargs='?', default="my_db.my_result_table", help="검색결과테이블명")
+    parser.add_argument("ref_table", help="검색기준테이블")
+    parser.add_argument("search_dir", help="검색디렉토리")
+    parser.add_argument("out_table", help="검색결과테이블명")
     parser.add_argument("--mid", help="검색디렉토리 하위 MID값 (쉼표 구분)", default=None)
     parser.add_argument("--db", action="store_true", help="DB 적재 활성화")
     parser.add_argument("--conf", help="mysql.conf 파일 경로", default=None)
-    parser.add_argument("--where", choices=["old", "new", "all"], help="검색기준테이블 조회 필터", default=None)
+    parser.add_argument("--where", choices=["old", "new"], help="검색기준테이블 조회 필터", default=None)
     parser.add_argument("--chk", choices=["default", "encdec_no", "all"], help="암호화/복호화 포함 및 제외 필터", default=None)
 
     args = parser.parse_args()
-
-    print("=" * 80)
-    print(" [DEBUG] 수신된 전체 실행 인자 (sys.argv):")
-    print("  %s" % str(sys.argv))
-    print("=" * 80)
 
     op_dtm = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1492,9 +1479,6 @@ def main():
                                 mid_exclude_buffer.append("-" * 80)
                                 
                                 for ref_row in col_to_rows[col_lower]:
-                                    final_dtm = ref_row.get("최종작업일시", "").strip()
-                                    if not final_dtm or final_dtm.upper() == "NONE":
-                                        final_dtm = op_dtm
                                     result_row = dict(ref_row)
                                     result_row.update({
                                         "run_id": run_id,
@@ -1503,8 +1487,7 @@ def main():
                                         "line_number": l_num,
                                         "matched_line": l_val.strip(),
                                         "vscode_open_cmd": vscode_cmd,
-                                        "query_text": raw_query,
-                                        "op_dtm": final_dtm
+                                        "query_text": raw_query
                                     })
                                     excluded_results.append(result_row)
                                 continue
@@ -1534,9 +1517,6 @@ def main():
                                 files_with_matches.add(filepath)
                                 match_line_count += 1
                                 for ref_row in col_to_rows[col_lower]:
-                                    final_dtm = ref_row.get("최종작업일시", "").strip()
-                                    if not final_dtm or final_dtm.upper() == "NONE":
-                                        final_dtm = op_dtm
                                     result_row = dict(ref_row)
                                     result_row.update({
                                         "run_id": run_id,
@@ -1545,8 +1525,7 @@ def main():
                                         "line_number": l_num,
                                         "matched_line": l_val.strip(),
                                         "vscode_open_cmd": vscode_cmd,
-                                        "query_text": raw_query,
-                                        "op_dtm": final_dtm
+                                        "query_text": raw_query
                                     })
                                     included_results.append(result_row)
                                     
@@ -1565,9 +1544,6 @@ def main():
                                 mid_exclude_buffer.append("-" * 80)
                                 
                                 for ref_row in col_to_rows[col_lower]:
-                                    final_dtm = ref_row.get("최종작업일시", "").strip()
-                                    if not final_dtm or final_dtm.upper() == "NONE":
-                                        final_dtm = op_dtm
                                     result_row = dict(ref_row)
                                     result_row.update({
                                         "run_id": run_id,
@@ -1576,8 +1552,7 @@ def main():
                                         "line_number": l_num,
                                         "matched_line": l_val.strip(),
                                         "vscode_open_cmd": vscode_cmd,
-                                        "query_text": raw_query,
-                                        "op_dtm": final_dtm
+                                        "query_text": raw_query
                                     })
                                     excluded_results.append(result_row)
 
@@ -1778,9 +1753,6 @@ def main():
 
                     vscode_cmd = "code -g %s:%s" % (os.path.abspath(filepath), l_num)
                     
-                    final_dtm = rep_row.get("최종작업일시", "").strip()
-                    if not final_dtm or final_dtm.upper() == "NONE":
-                        final_dtm = op_dtm
                     diff_row = {
                         "run_id": run_id,
                         "mid": mid,
@@ -1800,7 +1772,7 @@ def main():
                         "matched_line": info["matched_line"].strip(),
                         "vscode_open_cmd": vscode_cmd,
                         "query_text": info["query_text"],
-                        "op_dtm": final_dtm
+                        "op_dtm": op_dtm
                     }
                     diff_cols_results.append(diff_row)
                     diff_cols_line_count += 1
