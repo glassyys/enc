@@ -351,9 +351,6 @@ def load_schema_variables() -> dict:
     return schema_map
 
 
-SCHEMA_VARS = load_schema_variables()
-
-
 # ============================================================
 # schema 변수 치환 + schema/table 분리
 # ============================================================
@@ -1593,9 +1590,8 @@ def build_col_match_rows(
 # MAIN
 # ============================================================
 def main():
-    start_time = datetime.now()
-    op_dtm = start_time.strftime("%Y-%m-%d %H:%M:%S")
-    run_id = start_time.strftime("%Y%m%d_%H%M%S")
+    op_dtm = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     print("=" * 60)
     print("[INFO] 검색 기준 CSV 로드: %s" % INPUT_CSV_PATH)
@@ -1647,7 +1643,7 @@ def main():
 
     print("\n[INFO] 분석 시작         : %s" % os.path.abspath(SOURCE_DIR))
     print("[INFO] 실행 모드         : %s" % MODE)
-    print("[INFO] 처리시작시간       : %s" % op_dtm)
+    print("[INFO] 처리일시 (op_dtm) : %s" % op_dtm)
     print("-" * 60)
 
     temp_registry = build_temp_registry(SOURCE_DIR)
@@ -1783,16 +1779,11 @@ def main():
             )
 
     # ── 결과 요약 출력 ───────────────────────────────────────────────
-    end_time = datetime.now()
-    elapsed_time = end_time - start_time
-
     print("\n" + "=" * 60)
     print(" SQL 소스/타겟 테이블 추출 완료 [%s]" % MODE)
     print("=" * 60)
     print("  실행 모드           : %s" % MODE)
-    print("  처리시작시간        : %s" % start_time.strftime("%Y-%m-%d %H:%M:%S"))
-    print("  처리종료시간        : %s" % end_time.strftime("%Y-%m-%d %H:%M:%S"))
-    print("  총 소요시간         : %s" % str(elapsed_time))
+    print("  처리일시            : %s" % op_dtm)
     if csv_path:
         print("  CSV 파일 (리니지)   : %s" % csv_path)
     if col_match_csv_path:

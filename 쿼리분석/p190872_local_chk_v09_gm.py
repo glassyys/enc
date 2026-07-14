@@ -1276,6 +1276,7 @@ def build_db_batch_diff_cols(results, run_id, mid, op_dtm):
 # MAIN
 # ============================================================
 def main():
+    start_time = datetime.now()
     parser = argparse.ArgumentParser(description="Query Analyzer Script (v08_gm - 17차 수정)")
     parser.add_argument("ref_table", nargs='?', default="my_db.my_ref_table", help="검색기준테이블")
     parser.add_argument("search_dir", nargs='?', default="D:\\workspace\\enc", help="검색디렉토리")
@@ -1293,8 +1294,8 @@ def main():
     print("  %s" % str(sys.argv))
     print("=" * 80)
 
-    op_dtm = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    op_dtm = start_time.strftime("%Y-%m-%d %H:%M:%S")
+    run_id = start_time.strftime("%Y%m%d_%H%M%S")
 
     script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     out_dir = os.path.join(script_dir, "out")
@@ -1311,6 +1312,7 @@ def main():
     print("  WHERE 필터          : %s" % (args.where if args.where else "(미지정)"))
     print("  CHK 필터            : %s" % (args.chk if args.chk else "(미지정)"))
     print("  DB 적재 여부        : %s" % ("YES (--db)" if args.db else "NO"))
+    print("  처리시작시간        : %s" % op_dtm)
     print("-" * 80)
 
     if _MYSQL_DRIVER is None:
@@ -1952,8 +1954,13 @@ def main():
                 pf.write("\n".join(mid_print_buffer) + "\n")
             print("[INFO] 화면출력내용 파일 생성 완료: %s" % print_path)
 
+    end_time = datetime.now()
+    elapsed_time = end_time - start_time
     print("=" * 80)
     print(" [매칭 분석 공정 완료]")
+    print("  - 처리시작시간       : %s" % start_time.strftime("%Y-%m-%d %H:%M:%S"))
+    print("  - 처리종료시간       : %s" % end_time.strftime("%Y-%m-%d %H:%M:%S"))
+    print("  - 총 소요시간         : %s" % str(elapsed_time))
     print("=" * 80)
 
 

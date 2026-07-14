@@ -973,7 +973,6 @@ def build_db_batch_diff_cols(results, mid, op_dtm):
 # MAIN
 # ============================================================
 def main():
-    start_time = datetime.now()
     parser = argparse.ArgumentParser(description="Query Analyzer Script (Col/File Mode)")
     parser.add_argument("search_dir", help="검색디렉토리")
     parser.add_argument("out_table", help="검색결과테이블명")
@@ -1060,8 +1059,8 @@ def main():
             "asis_enc_yn": ""
         })
 
-    op_dtm = start_time.strftime("%Y-%m-%d %H:%M:%S")
-    run_id = start_time.strftime("%Y%m%d_%H%M%S")
+    op_dtm = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     out_dir = os.path.join(script_dir, "out")
@@ -1075,7 +1074,6 @@ def main():
     print("  검색 결과 테이블   : %s" % args.out_table)
     print("  MID                 : %s" % (args.mid if args.mid else "(미지정, 전체 검색)"))
     print("  DB 적재 여부        : %s" % ("YES (--db)" if args.db else "NO"))
-    print("  처리시작시간        : %s" % op_dtm)
     print("-" * 80)
 
     if args.db:
@@ -1533,13 +1531,8 @@ def main():
                 pf.write("\n".join(mid_print_buffer) + "\n")
             print("[INFO] 화면출력내용 파일 생성 완료: %s" % print_path)
 
-    end_time = datetime.now()
-    elapsed_time = end_time - start_time
     print("=" * 80)
     print(" [매칭 분석 공정 완료]")
-    print("  - 처리시작시간       : %s" % start_time.strftime("%Y-%m-%d %H:%M:%S"))
-    print("  - 처리종료시간       : %s" % end_time.strftime("%Y-%m-%d %H:%M:%S"))
-    print("  - 총 소요시간         : %s" % str(elapsed_time))
     print("=" * 80)
 
 

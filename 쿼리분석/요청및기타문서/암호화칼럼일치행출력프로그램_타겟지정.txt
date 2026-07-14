@@ -525,3 +525,7 @@ p190872_[기준테이블]_[MID]_all_encdec_no.csv 파일 생성
 --20260714
 D:\workspace\enc\쿼리분석\p190872_local_chk_v09_gm.py
 처리일시를  최종작업일시기준으로 수정하도록 소스수정
+
+-- 20250715
+아래 소스 처리시작시간과 종료시간 출력문 표시되도록 추가수정
+D:\workspace\enc\쿼리분석\p190872_local_chk_v09_gm.py
