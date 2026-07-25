@@ -1,0 +1,8 @@
+1차요청
+D:\workspace\enc\쿼리분석\sql_v12_full_new_03_col.py
+위 소스에 대해
+아래파일로 요건대로 생성요청
+insert ${var} table ${aaa}.tb1 
+쿼리인 경우 "${aaa}.tb1" 이 타겟테이블로 추출안되는 부분
+기존로직 유지하고 추가로 보완수정후
+sql_v12_full_new_04_col.py 파일로 생성

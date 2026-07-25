@@ -1,92 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ===============================================================
-# p190872_local_chk_v09_gm.py (2026-07-25 수정)
-#
-# [수정 사항 요약]
-#   - 2026-07-25 추가 수정:
-#     * 복합 식 AS/Alias 컬럼 매핑 보완: ",max(nvl(col_a, 'a')) ins_col_b" 구문과 같이 함수/괄호 표현식 뒤에 "as" 키워드가 생략된 Alias 구문도 "비교 CSV 파일" 및 "비교 DB 테이블"에 추출 및 등록되도록 파싱 로직 개선.
-#     * 수정 전 백업 보관 정책 준수 (p190872_local_chk_v09_gm_bak20260725.py)
-#   - 2026-07-14 추가 수정:
-#     * 처리일시(op_dtm)를 검색기준테이블에 등록된 해당 컬럼의 최종작업일시(물리컬럼: 최종작업일시/last_work_dtm/upd_dtm 등) 기준으로 반영되도록 수정.
-#     * 기준테이블에 최종작업일시 컬럼이 존재하지 않거나 값이 없을 경우 fallback으로 프로그램의 실행 시각(datetime.now())을 사용하도록 구현.
-#   - Python 2.7.5 호환성 전면 적용: 
-#     * 모든 타입 힌팅 제거
-#     * codecs.open() 사용으로 인코딩 오류 방지
-#     * os.makedirs(exist_ok=True) -> os.path.exists() 사전 검사 분기 적용
-#     * ConfigParser 임포트 호환성 추가
-#   - 17차 추가요청 반영:
-#     * default.encrypt/decrypt 함수 첫 번째 인자가 식별자(컬럼)가 아닌 리터럴 상수인 경우(예: '', '1', '산', '#', NULL 등) 'dummy'로 선치환하여 비교 대상에서 완전히 배제
-#     * 수정 전 백업 보관 정책 준수 (bak17)
-#   - 16차 추가요청 반영:
-#     * col is null 및 col is not null 단독 구문 비교 추출 제외 처리
-#     * CASE WHEN 조건절 내 컬럼을 비교 탐색 대상에서 배제 처리 (when ... then 부분을 then으로 치환하는 전처리 도입)
-#     * 수정 전 백업 보관 정책 준수 (bak16)
-#   - 15차 추가요청 반영:
-#     * 비교 CSV 파일 추출 시 default.encrypt/decrypt 함수 껍데기 벗기기(정규화) 선처리 도입
-#     * 정규화된 컬럼명을 기반으로 기존 13차 비교 패턴(AS, =, CASE, 기타연산자 등)을 실행하여 암복호화 구문이 씌워진 컬럼들도 누락 없이 완벽 매칭
-#     * default.decrypt(col1) = column_name_not_col 과 같이 기준테이블에 없는 컬럼과의 비교이더라도 컬럼끼리의 비교인 경우 예외 추출 기능 구현
-#     * 수정 전 백업 보관 정책 준수 (bak15)
-#   - 14차 추가요청 반영:
-#     * 비교 CSV 파일 생성 시 검색 대상 범위를 "default 분리 CSV" 포함 결과 CSV 파일에 포함된 전체 대상으로 조정
-#     * default.encrypt, default.decrypt 단어가 들어간 라인은 제외하지 않고 결과 및 비교 대상에 포함하도록 수정
-#     * 향후 수정 시 원본 파일 백업 정책 적용
-#   - 13차 추가요청 반영:
-#     * 동일 라인 내에서 서로 다른 2개 이상의 검색 대상 컬럼(column_name)이 
-#       AS(공백 alias 포함), =, CASE, 기타 비교 구문으로 연결된 경우 탐색 로직 구현
-#     * 탐색된 건들은 p190872_{ref_tbl_only}_{mid}_diff_cols.csv 파일로 생성 및 {out_table}_diff_cols 테이블에 적재
-# ===============================================================
-# p190872_local_chk_v08_gm.py(20260625)
-#
-# [소스 내용 정리]
-#   본 프로그램은 DB의 [검색기준테이블]로부터 암호화 검토 칼럼을 읽어온 후,
-#   지정한 [검색디렉토리] 하위의 소스 파일들(또는 --mid 옵션으로 지정한 sub-directory)을 
-#   검색하여 칼럼이 정식 사용되고 있는지 상세 분석 및 결과를 추출하는 프로그램입니다.
-#   
-#   - 쿼리 블록 분리: 소스 파일 내 SELECT, INSERT, UPDATE 등의 DML/DDL 및 EXECUTE IMMEDIATE문 단독 검출
-#   - 주석 무시: SQL 한줄 주석(--, #) 및 블록 주석(/* */) 내 칼럼 매칭은 자동 제외
-#   - 오밋(Omit) 필터: 단순 칼럼 선택(col1, a.col1), alias 부여(col1 as c), 단순 1:1 대입/비교(a.col1 = b.col22) 제외
-#   - 인클루드(Include) 필터: 칼럼 가공이나 함수가 적용된 식(substr, nvl, case문, max 등)만 추출
-#   - 결과 다중화: 추출 결과는 MID별로 CSV 파일, 화면 덤프 텍스트 파일(print.txt), 제외된 로그(exclude.txt)를 생성하며
-#                  --db 옵션 지정 시 지정한 [검색결과테이블명] 테이블에 자동 적재
-#   - 암호화 검증 기능: default 분리 CSV 파일 생성 시 동일 라인 내 [컬럼명, default.decrypt/encrypt/eccyrpt, 변환된 key값] 동시 존재 여부 검사 및 OK/NOT OK 판정
-#
-# [실행 형식]
-# # python p190872_local_chk_v08_gm.py <검색기준테이블> <검색디렉토리> <검색결과테이블명> [--mid <MID목록>] [--db] [--conf <설정파일>] [--where <old|new>] [--chk <default|encdec_no|all>]
-#
-# [실행 예시]
-# # 1. 기본 실행 예시 (MID 전체 검색, DB 미적재):
-# # python p190872_local_chk_v08_gm.py my_db.my_ref_table D:\chksrc\sources my_db.my_result_table
-#
-# # 2. 특정 MID(subdirectories) 검색 및 DB 적재:
-# # python p190872_local_chk_v08_gm.py my_db.my_ref_table D:\chksrc\sources my_db.my_result_table --mid aaa,bbb,ccc --db --conf D:\chksrc\mysql.conf
-#
-# # 3. 분리 적재 및 파일 개별 생성 (--chk all):
-# # python p190872_local_chk_v08_gm.py my_db.my_ref_table D:\chksrc\sources my_db.my_result_table --mid aaa --db --chk all
-#
-# [수정 이력]
-# ─────────────────────────────────────────────────────────────
-# v05_gm (2026-06-16)
-#   - 최초 작성 및 LIKE 검색방식에서 정규식 완전일치 방식으로 수정
-# v06_gm (2026-06-24)
-#   - 실행 구조 개편 및 기타 옵션 추가 등
-# v07_gm (2026-06-24)
-#   - query_text 내의 원본 주석을 유지하여 CSV 및 DB에 적재하되 칼럼 매칭은 주석 제거 상태로 수행하도록 개선
-#   - is_pure_column(생략/포함 조건) 로직을 사용자의 예시 요건에 맞추어 전면 보완
-#   - 9차 수정: 
-#     * 동일 칼럼 비교(on, where, and 뒤의 a.col1=b.col1 등) 및 단순 나열 생략 처리
-#     * 파라미터에 결과테이블명 지정받도록 변경
-#     * DB 적재 시 테이블이 없으면 생성하고, 이미 존재 시 mid 조건 데이터만 삭제 후 등록 처리
-#   - 10차 추가요청:
-#     * --chk all 조건 추가 및 all 분기 시 default (encrypt/decrypt 포함) 와 encdec_no (미포함) 결과 분리 생성/적재 기능 적용
-#   - 11차 추가요청:
-#     * CSV 파일 생성 시에는 query_text 컬럼 제외하고 저장하도록 스키마 분리
-#   - 12차 추가요청:
-#     * exclude로 제외한 매칭 데이터들도 구조적으로 수집하여 {결과테이블명}_exclude 테이블에 적재하도록 기능 보완
-# v08_gm (2026-06-25)
-#   - 암호화파일 정상처리 여부 검증로직 추가:
-#     * "default 분리 CSV" 파일을 검색하여 동일 라인에 [column_name], [default.decrypt/encrypt/eccyrpt], [tobe_enc_key 변환코드(e1/e2/e3/e4)]가 모두 있으면 "OK", 없으면 "NOT OK"
-#     * 검증된 결과를 담은 별도의 CSV 파일(p190872_{ref_tbl_only}_{mid}_default_chk.csv) 생성
+# p190872_local_chk_v09_gm.py (2026-07-14 수정)
+# [백업 파일 - 2026-07-25 수정 전 백업: p190872_local_chk_v09_gm_bak20260725.py]
 # ===============================================================
 
 import os
@@ -809,7 +725,7 @@ def remove_if_condition(s):
     return s
 
 
-def normalize_compare_token(token: str):
+def normalize_compare_token(token):
     if not token:
         return None
 
@@ -859,7 +775,7 @@ def find_matched_columns_in_expression(expr, matched_cols, exclude_cols=None):
     return candidates
 
 
-def extract_ordered_pair_from_equal_expression(norm_l_val_lower: str):
+def extract_ordered_pair_from_equal_expression(norm_l_val_lower):
     # 비교식은 좌변/우변 순서를 그대로 유지해야 함
     norm_l_val_lower = re.sub(r"(?i)\s*::\s*[a-zA-Z0-9_]+", "", norm_l_val_lower)
 
@@ -1306,7 +1222,7 @@ def main():
         os.makedirs(out_dir)
 
     print("=" * 80)
-    print(" [검색기준테이블 조회 → 소스 매칭 분석 시작]")
+    print(" [검색기준테이블 조회 -> 소스 매칭 분석 시작]")
     print("=" * 80)
     print("  검색 기준 테이블   : %s" % args.ref_table)
     print("  검색 디렉토리       : %s" % args.search_dir)
@@ -1679,31 +1595,23 @@ def main():
                                 target_col2 = m_2.group(1).strip().lower()
                                 match_type = "6) default 암복호화 AS/Alias 문"
                             else:
-                                # 3) 복합 식 AS/Alias 컬럼 매핑 (예: max(...) as alias_col 또는 max(...) alias_col) - [2026-07-25 보완]
-                                #     ",max(nvl(col_a, 'a')) ins_col_b" 처럼 'as'가 생략된 표현식 구문도 추출되도록 개선
+                                # 3) 복합 식 AS/Alias 컬럼 매핑 (예: max(...) as alias_col)
                                 alias_col = None
-                                # 1차: 닫는 괄호 ')' 뒤에 공백 후 (AS 생략 가능) 식별자(Alias)가 위치하는 패턴 탐색 (2026-07-25)
-                                for m_alias in re.finditer(r"\)\s+(?:as\s+)?([a-zA-Z0-9_]+)\b", norm_l_val_lower, re.IGNORECASE):
-                                    cand_alias = m_alias.group(1).strip().lower()
-                                    prefix_part = norm_l_val_lower[:m_alias.start()]
-                                    if re.search(r"\b%s\b" % re.escape(col_lower), prefix_part):
-                                        if cand_alias not in SQL_KEYWORDS and cand_alias not in SQL_TYPE_TOKENS:
-                                            alias_col = cand_alias
-                                            break
-                                
-                                # 2차: 괄호가 없는 일반 연산식 뒤 'as alias_col' 탐색 (fallback)
-                                if not alias_col:
-                                    for m_as in re.finditer(r"\bas\s+([a-zA-Z0-9_]+)\b", norm_l_val_lower, re.IGNORECASE):
-                                        cand_alias = m_as.group(1).strip().lower()
-                                        prefix_part = norm_l_val_lower[:m_as.start()]
-                                        if re.search(r"\b%s\b" % re.escape(col_lower), prefix_part):
-                                            if cand_alias not in SQL_KEYWORDS and cand_alias not in SQL_TYPE_TOKENS:
-                                                alias_col = cand_alias
-                                                break
-
+                                prefix_part = ""
+                                m_as = re.search(r"\bas\s+([a-zA-Z0-9_]+)\b", norm_l_val_lower)
+                                if m_as:
+                                    alias_col = m_as.group(1).strip().lower()
+                                    prefix_part = norm_l_val_lower[:m_as.start()]
+                                else:
+                                    m_no_as = re.search(r"\)\s+([a-zA-Z0-9_]+)\s*$", norm_l_val_lower)
+                                    if m_no_as:
+                                        alias_col = m_no_as.group(1).strip().lower()
+                                        prefix_part = norm_l_val_lower[:m_no_as.start()]
+                                        
                                 if alias_col:
-                                    target_col2 = alias_col
-                                    match_type = "6) default 암복호화 AS/Alias 문"
+                                    if re.search(r"\b%s\b" % re.escape(col_lower), prefix_part):
+                                        target_col2 = alias_col
+                                        match_type = "6) default 암복호화 AS/Alias 문"
                                 
                             if target_col2:
                                 if "." in target_col2:

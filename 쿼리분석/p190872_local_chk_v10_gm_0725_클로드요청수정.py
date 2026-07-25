@@ -1,92 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ===============================================================
-# p190872_local_chk_v09_gm.py (2026-07-25 수정)
-#
+# p190872_local_chk_v10_gm.py (2026-07-25 작성 및 수정)
+# [수정 전 백업 파일: p190872_local_chk_v10_gm_bak3.py]
+# 
 # [수정 사항 요약]
-#   - 2026-07-25 추가 수정:
-#     * 복합 식 AS/Alias 컬럼 매핑 보완: ",max(nvl(col_a, 'a')) ins_col_b" 구문과 같이 함수/괄호 표현식 뒤에 "as" 키워드가 생략된 Alias 구문도 "비교 CSV 파일" 및 "비교 DB 테이블"에 추출 및 등록되도록 파싱 로직 개선.
-#     * 수정 전 백업 보관 정책 준수 (p190872_local_chk_v09_gm_bak20260725.py)
-#   - 2026-07-14 추가 수정:
-#     * 처리일시(op_dtm)를 검색기준테이블에 등록된 해당 컬럼의 최종작업일시(물리컬럼: 최종작업일시/last_work_dtm/upd_dtm 등) 기준으로 반영되도록 수정.
-#     * 기준테이블에 최종작업일시 컬럼이 존재하지 않거나 값이 없을 경우 fallback으로 프로그램의 실행 시각(datetime.now())을 사용하도록 구현.
-#   - Python 2.7.5 호환성 전면 적용: 
-#     * 모든 타입 힌팅 제거
-#     * codecs.open() 사용으로 인코딩 오류 방지
-#     * os.makedirs(exist_ok=True) -> os.path.exists() 사전 검사 분기 적용
-#     * ConfigParser 임포트 호환성 추가
-#   - 17차 추가요청 반영:
-#     * default.encrypt/decrypt 함수 첫 번째 인자가 식별자(컬럼)가 아닌 리터럴 상수인 경우(예: '', '1', '산', '#', NULL 등) 'dummy'로 선치환하여 비교 대상에서 완전히 배제
-#     * 수정 전 백업 보관 정책 준수 (bak17)
-#   - 16차 추가요청 반영:
-#     * col is null 및 col is not null 단독 구문 비교 추출 제외 처리
-#     * CASE WHEN 조건절 내 컬럼을 비교 탐색 대상에서 배제 처리 (when ... then 부분을 then으로 치환하는 전처리 도입)
-#     * 수정 전 백업 보관 정책 준수 (bak16)
-#   - 15차 추가요청 반영:
-#     * 비교 CSV 파일 추출 시 default.encrypt/decrypt 함수 껍데기 벗기기(정규화) 선처리 도입
-#     * 정규화된 컬럼명을 기반으로 기존 13차 비교 패턴(AS, =, CASE, 기타연산자 등)을 실행하여 암복호화 구문이 씌워진 컬럼들도 누락 없이 완벽 매칭
-#     * default.decrypt(col1) = column_name_not_col 과 같이 기준테이블에 없는 컬럼과의 비교이더라도 컬럼끼리의 비교인 경우 예외 추출 기능 구현
-#     * 수정 전 백업 보관 정책 준수 (bak15)
-#   - 14차 추가요청 반영:
-#     * 비교 CSV 파일 생성 시 검색 대상 범위를 "default 분리 CSV" 포함 결과 CSV 파일에 포함된 전체 대상으로 조정
-#     * default.encrypt, default.decrypt 단어가 들어간 라인은 제외하지 않고 결과 및 비교 대상에 포함하도록 수정
-#     * 향후 수정 시 원본 파일 백업 정책 적용
-#   - 13차 추가요청 반영:
-#     * 동일 라인 내에서 서로 다른 2개 이상의 검색 대상 컬럼(column_name)이 
-#       AS(공백 alias 포함), =, CASE, 기타 비교 구문으로 연결된 경우 탐색 로직 구현
-#     * 탐색된 건들은 p190872_{ref_tbl_only}_{mid}_diff_cols.csv 파일로 생성 및 {out_table}_diff_cols 테이블에 적재
-# ===============================================================
-# p190872_local_chk_v08_gm.py(20260625)
-#
-# [소스 내용 정리]
-#   본 프로그램은 DB의 [검색기준테이블]로부터 암호화 검토 칼럼을 읽어온 후,
-#   지정한 [검색디렉토리] 하위의 소스 파일들(또는 --mid 옵션으로 지정한 sub-directory)을 
-#   검색하여 칼럼이 정식 사용되고 있는지 상세 분석 및 결과를 추출하는 프로그램입니다.
-#   
-#   - 쿼리 블록 분리: 소스 파일 내 SELECT, INSERT, UPDATE 등의 DML/DDL 및 EXECUTE IMMEDIATE문 단독 검출
-#   - 주석 무시: SQL 한줄 주석(--, #) 및 블록 주석(/* */) 내 칼럼 매칭은 자동 제외
-#   - 오밋(Omit) 필터: 단순 칼럼 선택(col1, a.col1), alias 부여(col1 as c), 단순 1:1 대입/비교(a.col1 = b.col22) 제외
-#   - 인클루드(Include) 필터: 칼럼 가공이나 함수가 적용된 식(substr, nvl, case문, max 등)만 추출
-#   - 결과 다중화: 추출 결과는 MID별로 CSV 파일, 화면 덤프 텍스트 파일(print.txt), 제외된 로그(exclude.txt)를 생성하며
-#                  --db 옵션 지정 시 지정한 [검색결과테이블명] 테이블에 자동 적재
-#   - 암호화 검증 기능: default 분리 CSV 파일 생성 시 동일 라인 내 [컬럼명, default.decrypt/encrypt/eccyrpt, 변환된 key값] 동시 존재 여부 검사 및 OK/NOT OK 판정
-#
-# [실행 형식]
-# # python p190872_local_chk_v08_gm.py <검색기준테이블> <검색디렉토리> <검색결과테이블명> [--mid <MID목록>] [--db] [--conf <설정파일>] [--where <old|new>] [--chk <default|encdec_no|all>]
-#
-# [실행 예시]
-# # 1. 기본 실행 예시 (MID 전체 검색, DB 미적재):
-# # python p190872_local_chk_v08_gm.py my_db.my_ref_table D:\chksrc\sources my_db.my_result_table
-#
-# # 2. 특정 MID(subdirectories) 검색 및 DB 적재:
-# # python p190872_local_chk_v08_gm.py my_db.my_ref_table D:\chksrc\sources my_db.my_result_table --mid aaa,bbb,ccc --db --conf D:\chksrc\mysql.conf
-#
-# # 3. 분리 적재 및 파일 개별 생성 (--chk all):
-# # python p190872_local_chk_v08_gm.py my_db.my_ref_table D:\chksrc\sources my_db.my_result_table --mid aaa --db --chk all
-#
-# [수정 이력]
-# ─────────────────────────────────────────────────────────────
-# v05_gm (2026-06-16)
-#   - 최초 작성 및 LIKE 검색방식에서 정규식 완전일치 방식으로 수정
-# v06_gm (2026-06-24)
-#   - 실행 구조 개편 및 기타 옵션 추가 등
-# v07_gm (2026-06-24)
-#   - query_text 내의 원본 주석을 유지하여 CSV 및 DB에 적재하되 칼럼 매칭은 주석 제거 상태로 수행하도록 개선
-#   - is_pure_column(생략/포함 조건) 로직을 사용자의 예시 요건에 맞추어 전면 보완
-#   - 9차 수정: 
-#     * 동일 칼럼 비교(on, where, and 뒤의 a.col1=b.col1 등) 및 단순 나열 생략 처리
-#     * 파라미터에 결과테이블명 지정받도록 변경
-#     * DB 적재 시 테이블이 없으면 생성하고, 이미 존재 시 mid 조건 데이터만 삭제 후 등록 처리
-#   - 10차 추가요청:
-#     * --chk all 조건 추가 및 all 분기 시 default (encrypt/decrypt 포함) 와 encdec_no (미포함) 결과 분리 생성/적재 기능 적용
-#   - 11차 추가요청:
-#     * CSV 파일 생성 시에는 query_text 컬럼 제외하고 저장하도록 스키마 분리
-#   - 12차 추가요청:
-#     * exclude로 제외한 매칭 데이터들도 구조적으로 수집하여 {결과테이블명}_exclude 테이블에 적재하도록 기능 보완
-# v08_gm (2026-06-25)
-#   - 암호화파일 정상처리 여부 검증로직 추가:
-#     * "default 분리 CSV" 파일을 검색하여 동일 라인에 [column_name], [default.decrypt/encrypt/eccyrpt], [tobe_enc_key 변환코드(e1/e2/e3/e4)]가 모두 있으면 "OK", 없으면 "NOT OK"
-#     * 검증된 결과를 담은 별도의 CSV 파일(p190872_{ref_tbl_only}_{mid}_default_chk.csv) 생성
+#   - 2026-07-25 추가 보완:
+#     * ",nvl(d.CTZ_CORP_BIZ_SER_NUM,default.encrypt('#','e1'))   CTZ_CORP_NUM2" 쿼리 대응:
+#       미등록 별칭 컬럼(CTZ_CORP_NUM2)의 원래 대소문자 케이싱을 쿼리 원문에서 복원하고,
+#       기준 컬럼(CTZ_CORP_BIZ_SER_NUM)의 key컨버전코드(e1)를 연동하여 compare_col1, compare_col2에
+#       정상 추출 및 등록되도록 보완.
 # ===============================================================
 
 import os
@@ -174,7 +97,7 @@ def _detect_mysql_driver():
 
 _detect_mysql_driver()
 
-def _mysql_connect(conf):
+def _mysql_connect(conf, connect_timeout=10):
     host     = conf.get("host",     "localhost")
     port     = int(conf.get("port", 3306))
     user     = conf.get("user",     "")
@@ -186,14 +109,16 @@ def _mysql_connect(conf):
         import mysql.connector
         return mysql.connector.connect(
             host=host, port=port, user=user,
-            password=password, database=database, charset=charset
+            password=password, database=database, charset=charset,
+            connection_timeout=connect_timeout
         )
     elif _MYSQL_DRIVER == "pymysql":
         import pymysql
         return pymysql.connect(
             host=host, port=port, user=user,
             password=password, database=database,
-            charset=charset, autocommit=False
+            charset=charset, autocommit=False,
+            connect_timeout=connect_timeout
         )
     else:
         raise ImportError(
@@ -259,7 +184,7 @@ def load_ref_rows_from_db(mysql_conf, ref_table, where_opt=None):
     fq_table = make_fq(ref_schema, ref_tbl_only)
 
     try:
-        conn   = _mysql_connect(mysql_conf)
+        conn   = _mysql_connect(mysql_conf, connect_timeout=10)
         cursor = conn.cursor()
 
         if ref_schema:
@@ -549,10 +474,69 @@ def open_and_extract_queries(source_file_path):
 # 주석 및 칼럼 필터링 유틸리티
 # ============================================================
 def strip_comments(line):
-    line = re.sub(r'--.*$', '', line)
-    line = re.sub(r'#.*$', '', line)
-    line = re.sub(r'/\*.*?\*/', '', line)
-    return line.strip()
+    # [2026-07-25 버그 수정] 기존 정규식 방식(re.sub(r'#.*$', ...) 등)은 문자열 리터럴
+    # 내부에 포함된 '#' (예: default.encrypt('#','e1')) 을 주석 시작으로 잘못 인식하여
+    # 그 뒤의 구문(닫는 괄호, 별칭 등)까지 통째로 잘려나가는 문제가 있었음.
+    # ('#', 'e1') 케이스에서 비교 CSV/DB(diff_cols)에 결과가 등록되지 않던 원인.
+    # -> 작은따옴표(') / 큰따옴표(") 문자열 리터럴 내부는 주석 판단에서 제외하도록
+    #    문자 단위로 스캔하는 방식으로 변경.
+    result = []
+    i = 0
+    n = len(line)
+    in_squote = False
+    in_dquote = False
+
+    while i < n:
+        ch = line[i]
+
+        if in_squote:
+            result.append(ch)
+            if ch == "'":
+                if i + 1 < n and line[i + 1] == "'":  # '' 이스케이프
+                    result.append(line[i + 1])
+                    i += 2
+                    continue
+                in_squote = False
+            i += 1
+            continue
+
+        if in_dquote:
+            result.append(ch)
+            if ch == '"':
+                if i + 1 < n and line[i + 1] == '"':  # "" 이스케이프
+                    result.append(line[i + 1])
+                    i += 2
+                    continue
+                in_dquote = False
+            i += 1
+            continue
+
+        # 문자열 리터럴 밖 (주석/구분자 판단 영역)
+        if ch == "'":
+            in_squote = True
+            result.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_dquote = True
+            result.append(ch)
+            i += 1
+            continue
+        if ch == '-' and i + 1 < n and line[i + 1] == '-':
+            break  # -- 주석: 라인 끝까지 제거
+        if ch == '#':
+            break  # # 주석: 라인 끝까지 제거
+        if ch == '/' and i + 1 < n and line[i + 1] == '*':
+            end = line.find('*/', i + 2)
+            if end == -1:
+                break  # 종료되지 않은 블록주석: 라인 끝까지 제거
+            i = end + 2
+            continue
+
+        result.append(ch)
+        i += 1
+
+    return "".join(result).strip()
 
 def is_pure_column(clean_line, col_name):
     line_lower = clean_line.lower().strip()
@@ -666,27 +650,67 @@ def normalize_diff_expression(expr):
     normalized = strip_cast_expressions(expr)
     normalized = re.sub(r"(?i)\s*::\s*[a-zA-Z0-9_]+", "", normalized)
 
-    normalized = re.sub(
-        r"(?i)default\.decrypt\s*\(\s*([a-zA-Z0-9_.]+)\s*\)",
-        r"\1",
-        normalized
-    )
-    normalized = re.sub(
-        r"(?i)default\.encrypt\s*\(\s*([a-zA-Z0-9_.]+)\s*,\s*[^)]*?\)",
-        r"\1",
-        normalized
-    )
-    normalized = re.sub(
-        r"(?i)default\.decrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*\)",
-        "'dummy'",
-        normalized
-    )
-    normalized = re.sub(
-        r"(?i)default\.encrypt\s*\(\s*(?:'[^']*'|\"[^\"]*\"|[0-9]+|\bnull\b|[^a-zA-Z0-9_.\s]+)\s*,\s*[^)]*?\)",
-        "'dummy'",
-        normalized
-    )
+    # default.encrypt / default.decrypt 함수 전체를 감싸서 처리
+    # 첫 인자가 일반 컬럼명이 아닐 경우 (리터럴, 가공식 등) 'dummy' 로 완전 치환
+    def replace_default_encdec(m):
+        fn_name = m.group(1).lower()
+        args_str = m.group(2).strip()
+        
+        # 첫 번째 인자 추출
+        first_arg = ""
+        m_first = re.search(r"^\s*('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|[a-zA-Z0-9_.]+)", args_str)
+        if m_first:
+            first_arg = m_first.group(1).strip()
+        else:
+            first_arg = args_str.split(",")[0].strip() if "," in args_str else args_str
 
+        # 첫 인자가 리터럴이거나 숫자인 경우
+        if first_arg.startswith("'") or first_arg.startswith('"') or first_arg.lower() in {"null", "dummy"} or re.fullmatch(r"[0-9]+", first_arg):
+            return "'dummy'"
+            
+        return first_arg
+
+    # depth 조절하여 default.encrypt / decrypt 구문 매칭
+    pos = 0
+    res_parts = []
+    while pos < len(normalized):
+        m = re.search(r"(?i)\bdefault\.(encrypt|decrypt)\s*\(", normalized[pos:])
+        if not m:
+            res_parts.append(normalized[pos:])
+            break
+
+        start = pos + m.start()
+        res_parts.append(normalized[pos:start])
+        fn_name = m.group(1).lower()
+        open_idx = start + len(m.group(0)) - 1
+        
+        depth = 1
+        idx = open_idx + 1
+        while idx < len(normalized) and depth > 0:
+            ch = normalized[idx]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+            idx += 1
+
+        args_content = normalized[open_idx + 1:idx - 1]
+        
+        first_arg = ""
+        m_first = re.search(r"^\s*('(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|[a-zA-Z0-9_.]+)", args_content)
+        if m_first:
+            first_arg = m_first.group(1).strip()
+        else:
+            first_arg = args_content.split(",")[0].strip() if "," in args_content else args_content
+
+        if first_arg.startswith("'") or first_arg.startswith('"') or first_arg.lower() in {"null", "dummy"} or re.fullmatch(r"[0-9]+", first_arg):
+            res_parts.append("'dummy'")
+        else:
+            res_parts.append(first_arg)
+            
+        pos = idx
+
+    normalized = "".join(res_parts)
     return normalized.strip()
 
 
@@ -809,7 +833,7 @@ def remove_if_condition(s):
     return s
 
 
-def normalize_compare_token(token: str):
+def normalize_compare_token(token):
     if not token:
         return None
 
@@ -859,7 +883,7 @@ def find_matched_columns_in_expression(expr, matched_cols, exclude_cols=None):
     return candidates
 
 
-def extract_ordered_pair_from_equal_expression(norm_l_val_lower: str):
+def extract_ordered_pair_from_equal_expression(norm_l_val_lower):
     # 비교식은 좌변/우변 순서를 그대로 유지해야 함
     norm_l_val_lower = re.sub(r"(?i)\s*::\s*[a-zA-Z0-9_]+", "", norm_l_val_lower)
 
@@ -932,7 +956,7 @@ def get_source_files(search_dir, mids=None):
     return result
 
 # ============================================================
-# DB 테이블 DDL 및 적재 모듈 (9차, 10차, 11차 및 12차 수정)
+# DB 테이블 DDL 및 적재 모듈 (v10: 외부 커넥션 conn 재사용 방식)
 # ============================================================
 _DDL_CREATE_RESULT = """
 CREATE TABLE IF NOT EXISTS {table} (
@@ -1048,99 +1072,71 @@ VALUES
   (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
-def db_load_table(mysql_conf, fq_table, ddl_create, sql_insert, batch, mid, table_label):
-    conn, cursor = None, None
+def db_load_table(conn, fq_table, ddl_create, sql_insert, batch, mid, table_label):
+    cursor = None
     batch_size = len(batch) if batch is not None else 0
-    print("[DB_LOAD] [%s] 시작: table=%s, mid=%s, rows=%d" % (table_label, fq_table, mid, batch_size))
+    print("[DB_LOAD] [%s] 시작 (단일 커넥션 재사용): table=%s, mid=%s, rows=%d" % (table_label, fq_table, mid, batch_size))
     try:
-        print("[DB_LOAD] [%s] MySQL 연결 시도: %s" % (table_label, fq_table))
-        conn   = _mysql_connect(mysql_conf)
+        if hasattr(conn, "ping"):
+            try: conn.ping(True)
+            except Exception: pass
+
         cursor = conn.cursor()
-        print("[DB_LOAD] [%s] MySQL 연결 성공" % table_label)
         
-        print("[DB_LOAD] [%s] DDL 실행 시작: %s" % (table_label, fq_table))
         cursor.execute(ddl_create.format(table=fq_table))
         conn.commit()
-        print("[DB_LOAD] [%s] DDL 실행 완료" % table_label)
         
-
         if "diff_cols" in fq_table.lower():
-            print("[DB_LOAD] [%s] diff_cols 테이블 컬럼 확인 시작" % table_label)
             cursor.execute("SHOW COLUMNS FROM %s" % fq_table)
             columns = [row[0].lower() for row in cursor.fetchall()]
             if "compare_col1" not in columns:
                 try:
-                    print("[DB_LOAD] [%s] compare_col1 컬럼 추가 시도" % table_label)
                     cursor.execute("ALTER TABLE %s ADD COLUMN `compare_col1` VARCHAR(500) NULL COMMENT '비교첫번째칼럼추출(컬럼명:변환키)' AFTER `tobe_enc_key`" % fq_table)
                     conn.commit()
                     print("[INFO] 테이블 %s 에 compare_col1 컬럼을 자동으로 추가했습니다." % fq_table)
                 except Exception as alter_err:
                     print("[WARNING] [%s] compare_col1 컬럼 추가 실패: %s" % (table_label, str(alter_err)))
-            else:
-                print("[DB_LOAD] [%s] compare_col1 컬럼은 이미 존재함" % table_label)
             if "compare_col2" not in columns:
                 try:
-                    print("[DB_LOAD] [%s] compare_col2 컬럼 추가 시도" % table_label)
                     cursor.execute("ALTER TABLE %s ADD COLUMN `compare_col2` VARCHAR(500) NULL COMMENT '비교두번째칼럼추출(컬럼명:변환키)' AFTER `compare_col1`" % fq_table)
                     conn.commit()
                     print("[INFO] 테이블 %s 에 compare_col2 컬럼을 자동으로 추가했습니다." % fq_table)
                 except Exception as alter_err:
                     print("[WARNING] [%s] compare_col2 컬럼 추가 실패: %s" % (table_label, str(alter_err)))
-            else:
-                print("[DB_LOAD] [%s] compare_col2 컬럼은 이미 존재함" % table_label)
         
         try:
-            print("[DB_LOAD] [%s] DELETE 실행 시작: table=%s, mid=%s" % (table_label, fq_table, mid))
             cursor.execute("DELETE FROM %s WHERE `mid` = %%s" % fq_table, (mid,))
             conn.commit()
-            print("[DB_LOAD] [%s] DELETE 완료" % table_label)
             
             if batch:
-                print("[DB_LOAD] [%s] INSERT 실행 시작: rows=%d" % (table_label, batch_size))
                 cursor.executemany(sql_insert.format(table=fq_table), batch)
                 conn.commit()
-                print("[DB_LOAD] [%s] INSERT 완료" % table_label)
-            else:
-                print("[DB_LOAD] [%s] INSERT 대상이 없어 건너뜁니다." % table_label)
             print("[INFO] DB 적재 완료 [%s]: %s (DELETE/INSERT mid=%s, %d 건)" % (table_label, fq_table, mid, batch_size))
             return len(batch), None
         except Exception as insert_err:
             print("[WARNING] [%s] 테이블 %s 데이터 적재 실패 (%s). 테이블을 재생성(DROP & CREATE) 후 다시 시도합니다." % (table_label, fq_table, str(insert_err)))
-            print("[TRACE] [%s] 적재 실패 상세\n%s" % (table_label, traceback.format_exc()), file=sys.stderr)
             try:
-                print("[DB_LOAD] [%s] 재생성 시도: DROP TABLE %s" % (table_label, fq_table))
                 conn.rollback()
                 cursor.execute("DROP TABLE IF EXISTS %s" % fq_table)
                 conn.commit()
                 
-                print("[DB_LOAD] [%s] 재생성 후 DDL 실행 시작" % table_label)
                 cursor.execute(ddl_create.format(table=fq_table))
                 conn.commit()
-                print("[DB_LOAD] [%s] 재생성 후 DDL 실행 완료" % table_label)
                 
-
-                print("[DB_LOAD] [%s] 재생성 후 DELETE 실행 시작" % table_label)
                 cursor.execute("DELETE FROM %s WHERE `mid` = %%s" % fq_table, (mid,))
                 conn.commit()
-                print("[DB_LOAD] [%s] 재생성 후 DELETE 완료" % table_label)
                 
                 if batch:
-                    print("[DB_LOAD] [%s] 재생성 후 INSERT 실행 시작: rows=%d" % (table_label, batch_size))
                     cursor.executemany(sql_insert.format(table=fq_table), batch)
                     conn.commit()
-                    print("[DB_LOAD] [%s] 재생성 후 INSERT 완료" % table_label)
-                else:
-                    print("[DB_LOAD] [%s] 재생성 후 INSERT 대상이 없어 건너뜁니다." % table_label)
                 print("[INFO] 테이블 재생성 후 DB 적재 완료 [%s]: %s (DELETE/INSERT mid=%s, %d 건)" % (table_label, fq_table, mid, batch_size))
                 return len(batch), None
             except Exception as retry_err:
                 print("[ERROR] [%s] 테이블 재생성 후 DB 적재 역시 실패하였습니다: %s" % (table_label, str(retry_err)), file=sys.stderr)
-                print("[TRACE] [%s] 재생성 후 실패 상세\n%s" % (table_label, traceback.format_exc()), file=sys.stderr)
                 raise retry_err
                 
     except Exception as e:
         print("[ERROR] DB 적재 실패 [%s]: %s" % (table_label, str(e)), file=sys.stderr)
-        print("[TRACE] [%s] DB 적재 실패 상세\n%s" % (table_label, traceback.format_exc()), file=sys.stderr)
         if conn:
             try: conn.rollback()
             except Exception: pass
@@ -1148,9 +1144,6 @@ def db_load_table(mysql_conf, fq_table, ddl_create, sql_insert, batch, mid, tabl
     finally:
         if cursor:
             try: cursor.close()
-            except Exception: pass
-        if conn:
-            try: conn.close()
             except Exception: pass
 
 def save_csv(rows, filepath, fieldnames, op_dtm):
@@ -1280,7 +1273,7 @@ def build_db_batch_diff_cols(results, run_id, mid, op_dtm):
 # ============================================================
 def main():
     start_time = datetime.now()
-    parser = argparse.ArgumentParser(description="Query Analyzer Script (v08_gm - 17차 수정)")
+    parser = argparse.ArgumentParser(description="Query Analyzer Script (v10_gm - 단일 커넥션 재사용)")
     parser.add_argument("ref_table", nargs='?', default="my_db.my_ref_table", help="검색기준테이블")
     parser.add_argument("search_dir", nargs='?', default="D:\\workspace\\enc", help="검색디렉토리")
     parser.add_argument("out_table", nargs='?', default="my_db.my_result_table", help="검색결과테이블명")
@@ -1306,7 +1299,7 @@ def main():
         os.makedirs(out_dir)
 
     print("=" * 80)
-    print(" [검색기준테이블 조회 → 소스 매칭 분석 시작]")
+    print(" [검색기준테이블 조회 -> 소스 매칭 분석 시작]")
     print("=" * 80)
     print("  검색 기준 테이블   : %s" % args.ref_table)
     print("  검색 디렉토리       : %s" % args.search_dir)
@@ -1382,578 +1375,592 @@ def main():
     out_schema, out_tbl_only = split_schema_table(args.out_table)
     fq_out_table = make_fq(out_schema, out_tbl_only)
 
-    for mid, files in source_files_by_mid.items():
-        out_suffix = mid
-        if args.where:
-            out_suffix += "_" + args.where
-        if args.chk:
-            out_suffix += "_" + args.chk
+    # ============================================================
+    # v10: DB 적재 활성화 시 단일 커넥션 생성 (모든 적재에 재사용)
+    # ============================================================
+    db_conn = None
+    if args.db:
+        try:
+            print("[INFO] DB 적재용 단일 커넥션 연결 시도 (connect_timeout=10s)...")
+            db_conn = _mysql_connect(mysql_conf, connect_timeout=10)
+            print("[INFO] DB 단일 커넥션 연결 성공")
+        except Exception as conn_err:
+            print("[ERROR] DB 적재용 단일 커넥션 생성 실패: %s" % str(conn_err))
+            sys.exit(1)
 
-        print("-" * 80)
-        print("-- 검색MID : %s (출력 접미사: %s)" % (mid, out_suffix))
-        print("-" * 80)
+    try:
+        for mid, files in source_files_by_mid.items():
+            out_suffix = mid
+            if args.where:
+                out_suffix += "_" + args.where
+            if args.chk:
+                out_suffix += "_" + args.chk
 
-        mid_print_buffer = []
-        mid_print_buffer.append("-" * 80)
-        mid_print_buffer.append("-- 검색MID : %s" % mid)
-        mid_print_buffer.append("-" * 80)
+            print("-" * 80)
+            print("-- 검색MID : %s (출력 접미사: %s)" % (mid, out_suffix))
+            print("-" * 80)
 
-        mid_exclude_buffer = []
-        mid_exclude_buffer.append("-" * 80)
-        mid_exclude_buffer.append("-- 제외MID : %s" % mid)
-        mid_exclude_buffer.append("-" * 80)
+            mid_print_buffer = []
+            mid_print_buffer.append("-" * 80)
+            mid_print_buffer.append("-- 검색MID : %s" % mid)
+            mid_print_buffer.append("-" * 80)
 
-        included_results = []
-        excluded_results = []
-        diff_cols_results = [] # 13차 추가요청: 서로 다른 컬럼 비교용 결과
-        
-        seen_matches = set()
-        seen_diff_matches = set() # (filepath, l_num, sorted_cols_str)
+            mid_exclude_buffer = []
+            mid_exclude_buffer.append("-" * 80)
+            mid_exclude_buffer.append("-- 제외MID : %s" % mid)
+            mid_exclude_buffer.append("-" * 80)
 
-        total_files_scanned = len(files)
-        files_with_matches = set()
-        match_line_count = 0
-        exclude_line_count = 0
-        diff_cols_line_count = 0
-        
-        total_val, ok_val, nok_val = 0, 0, 0
-
-        for filepath in files:
-            queries, open_err, orig_lines, raw_content = open_and_extract_queries(filepath)
-            if open_err:
-                continue
+            included_results = []
+            excluded_results = []
+            diff_cols_results = []
             
-            if not queries and raw_content.strip():
-                queries = [{"query_text": raw_content, "query_text_clean": raw_content, "start_line_no": 1}]
+            seen_matches = set()
+            seen_diff_matches = set()
 
-            # 동일 파일 내에서 라인별 매칭 정보를 수집하기 위한 임시 맵
-            # (line_number) -> set(col_lower)
-            line_to_matched_cols = {}
-            line_info_map = {} # (line_number) -> {"matched_line": l_val, "query_text": raw_query, "clean_l_val": clean_l_val}
+            total_files_scanned = len(files)
+            files_with_matches = set()
+            match_line_count = 0
+            exclude_line_count = 0
+            diff_cols_line_count = 0
+            
+            total_val, ok_val, nok_val = 0, 0, 0
 
-            for q_idx, q_item in enumerate(queries, 1):
-                raw_query = q_item["query_text"]
-                clean_query = q_item.get("query_text_clean", raw_query)
-                clean_query_upper = clean_query.upper()
-                line_no_offset = q_item["start_line_no"]
-                query_lines = raw_query.splitlines()
-
-                for col_lower, rx in compiled_col_patterns.items():
-                    if rx.search(clean_query_upper):
-                        matched_lines_found = []
-                        if line_no_offset is not None and orig_lines:
-                            start_idx = line_no_offset - 1
-                            end_idx = min(start_idx + len(query_lines) + 10, len(orig_lines))
-                            for idx in range(start_idx, end_idx):
-                                if rx.search(orig_lines[idx]):
-                                    matched_lines_found.append({
-                                        "line_number": idx + 1,
-                                        "matched_line": orig_lines[idx]
-                                    })
-                        else:
-                            for idx, line in enumerate(query_lines):
-                                if rx.search(line):
-                                    matched_lines_found.append({
-                                        "line_number": idx + 1,
-                                        "matched_line": line
-                                    })
-
-                        for item in matched_lines_found:
-                            l_num = item["line_number"]
-                            l_val = item["matched_line"]
-                            
-                            match_key = (filepath, l_num, col_lower)
-                            if match_key in seen_matches:
-                                continue
-                            seen_matches.add(match_key)
-                            
-                            clean_l_val = strip_comments(l_val)
-                            
-                            if not rx.search(clean_l_val):
-                                continue
-                            
-                            orig_col_name = col_to_rows[col_lower][0]["column_name"]
-                            vscode_cmd = "code -g %s:%s" % (os.path.abspath(filepath), l_num)
-                            
-                            assoc_tables = sorted(list({r.get("tbl_name") for r in col_to_rows[col_lower] if r.get("tbl_name")}))
-                            assoc_tables_str = ", ".join(assoc_tables)
-
-                            # default.encrypt/decrypt 포함 여부 확인
-                            has_default_encdec = (
-                                "default.encrypt" in l_val.lower() or 
-                                "default.decrypt" in l_val.lower()
-                            )
-                            
-                            is_pure = is_pure_column(clean_l_val, orig_col_name)
-                            if has_default_encdec:
-                                is_pure = False # 제외 방지
-
-                            if is_pure:
-                                exclude_line_count += 1
-                                exclude_str = "[제외] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
-                                content_str = "[내용] %s" % l_val.strip()
-                                mid_exclude_buffer.append(exclude_str)
-                                mid_exclude_buffer.append(content_str)
-                                mid_exclude_buffer.append("-" * 80)
-                                
-                                for ref_row in col_to_rows[col_lower]:
-                                    final_dtm = ref_row.get("최종작업일시", "").strip()
-                                    if not final_dtm or final_dtm.upper() == "NONE":
-                                        final_dtm = op_dtm
-                                    result_row = dict(ref_row)
-                                    result_row.update({
-                                        "run_id": run_id,
-                                        "mid": mid,
-                                        "source_file": os.path.abspath(filepath),
-                                        "line_number": l_num,
-                                        "matched_line": l_val.strip(),
-                                        "vscode_open_cmd": vscode_cmd,
-                                        "query_text": raw_query,
-                                        "op_dtm": final_dtm
-                                    })
-                                    excluded_results.append(result_row)
-                                continue
-
-                            # 결과 및 비교 대상만 line_to_matched_cols에 등록
-                            if l_num not in line_to_matched_cols:
-                                line_to_matched_cols[l_num] = set()
-                            line_to_matched_cols[l_num].add(col_lower)
-                            
-                            if l_num not in line_info_map:
-                                line_info_map[l_num] = {
-                                    "matched_line": l_val,
-                                    "query_text": raw_query,
-                                    "clean_l_val": clean_l_val
-                                }
-
-                            is_included = True
-                            if args.chk:
-                                if args.chk == "default":
-                                    is_included = has_default_encdec
-                                elif args.chk == "encdec_no":
-                                    is_included = not has_default_encdec
-                                elif args.chk == "all":
-                                    is_included = True
-
-                            if is_included:
-                                files_with_matches.add(filepath)
-                                match_line_count += 1
-                                for ref_row in col_to_rows[col_lower]:
-                                    final_dtm = ref_row.get("최종작업일시", "").strip()
-                                    if not final_dtm or final_dtm.upper() == "NONE":
-                                        final_dtm = op_dtm
-                                    result_row = dict(ref_row)
-                                    result_row.update({
-                                        "run_id": run_id,
-                                        "mid": mid,
-                                        "source_file": os.path.abspath(filepath),
-                                        "line_number": l_num,
-                                        "matched_line": l_val.strip(),
-                                        "vscode_open_cmd": vscode_cmd,
-                                        "query_text": raw_query,
-                                        "op_dtm": final_dtm
-                                    })
-                                    included_results.append(result_row)
-                                    
-                                match_str = "[매칭] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
-                                content_str = "[내용] %s" % l_val.strip()
-                                
-                                mid_print_buffer.append(match_str)
-                                mid_print_buffer.append(content_str)
-                                mid_print_buffer.append("-" * 80)
-                            else:
-                                exclude_line_count += 1
-                                exclude_str = "[제외] %s %s (테이블: %s, CHK필터제외)" % (vscode_cmd, orig_col_name, assoc_tables_str)
-                                content_str = "[내용] %s" % l_val.strip()
-                                mid_exclude_buffer.append(exclude_str)
-                                mid_exclude_buffer.append(content_str)
-                                mid_exclude_buffer.append("-" * 80)
-                                
-                                for ref_row in col_to_rows[col_lower]:
-                                    final_dtm = ref_row.get("최종작업일시", "").strip()
-                                    if not final_dtm or final_dtm.upper() == "NONE":
-                                        final_dtm = op_dtm
-                                    result_row = dict(ref_row)
-                                    result_row.update({
-                                        "run_id": run_id,
-                                        "mid": mid,
-                                        "source_file": os.path.abspath(filepath),
-                                        "line_number": l_num,
-                                        "matched_line": l_val.strip(),
-                                        "vscode_open_cmd": vscode_cmd,
-                                        "query_text": raw_query,
-                                        "op_dtm": final_dtm
-                                    })
-                                    excluded_results.append(result_row)
-
-            # 13차, 15차 및 16차 추가요청: 쿼리 분석 완료 후 라인 단위로 서로 다른 컬럼 비교 탐색 수행
-            for l_num, matched_cols in line_to_matched_cols.items():
-                info = line_info_map[l_num]
-                # 18차 수정보완3: row_number() 가 포함된 행은 비교 대상에서 제외 (오탐 방지)
-                if "row_number" in info["matched_line"].lower():
+            for filepath in files:
+                queries, open_err, orig_lines, raw_content = open_and_extract_queries(filepath)
+                if open_err:
                     continue
-                clean_l_val = info["clean_l_val"]
                 
-                # 16차 수정요청: is null 단독 구문 및 case when 조건절 전처리 제거
-                # 1) 'is null' 또는 'is not null' 제거
-                clean_l_val = re.sub(
-                    r"(?i)\bis\s+(?:not\s+)?null\b",
-                    " ",
-                    clean_l_val
-                )
-                # 2) case when ... then 구문에서 when 절 조건부만 제거하고 then만 남김
-                clean_l_val = re.sub(
-                    r"(?i)\bwhen\b.*?\bthen\b",
-                    "then",
-                    clean_l_val
-                )
+                if not queries and raw_content.strip():
+                    queries = [{"query_text": raw_content, "query_text_clean": raw_content, "start_line_no": 1}]
 
-                l_val_lower = info["matched_line"].lower()
-                
-                # 19차 수정요청: CAST / default.encrypt/decrypt 를 비교대상 추출에서 정규화
-                norm_l_val = normalize_diff_expression(clean_l_val)
-                norm_l_val = re.sub(
-                    r"(?i)\bis\s+(?:not\s+)?null\b",
-                    " ",
-                    norm_l_val
-                )
-                norm_l_val = re.sub(
-                    r"(?i)\bwhen\b.*?\bthen\b",
-                    "then",
-                    norm_l_val
-                )
-                norm_l_val = remove_if_condition(norm_l_val)
-                norm_l_val_lower = norm_l_val.lower()
-                
-                match_type = None
-                matched_pair = None # (col1, col2)
+                line_to_matched_cols = {}
+                line_info_map = {}
 
-                eq_pair = extract_ordered_pair_from_equal_expression(norm_l_val_lower)
-                if eq_pair:
-                    left_col = normalize_compare_token(eq_pair[0])
-                    right_col = normalize_compare_token(eq_pair[1])
-                    if left_col and right_col and left_col != right_col:
-                        matched_pair = (left_col, right_col)
-                        if re.search(r"\s*(!=|<>|>=|<=|>|<|\blike\b|\bin\b)\s*", norm_l_val_lower):
-                            match_type = "4) 기타 비교 구문"
-                        else:
-                            match_type = "5) 비교식 (=)"
-                if not match_type:
-                    # 1) 일반 13차 비교 규칙 적용 (norm_l_val에 대해 검사)
-                    if len(matched_cols) >= 2:
-                        match_type = check_diff_cols_match(norm_l_val_lower, matched_cols)
-                        if match_type:
-                            # determine original left-to-right order by locating first occurrences
-                            cols_list = list(matched_cols)
-                            cols_pos = [(norm_l_val_lower.find(c), c) for c in cols_list]
-                            cols_pos = [p for p in cols_pos if p[0] != -1]
-                            cols_pos.sort(key=lambda x: x[0])
-                            if len(cols_pos) >= 2:
-                                matched_pair = (cols_pos[0][1], cols_pos[1][1])
+                for q_idx, q_item in enumerate(queries, 1):
+                    raw_query = q_item["query_text"]
+                    clean_query = q_item.get("query_text_clean", raw_query)
+                    clean_query_upper = clean_query.upper()
+                    line_no_offset = q_item["start_line_no"]
+                    query_lines = raw_query.splitlines()
+
+                    for col_lower, rx in compiled_col_patterns.items():
+                        if rx.search(clean_query_upper):
+                            matched_lines_found = []
+                            if line_no_offset is not None and orig_lines:
+                                start_idx = line_no_offset - 1
+                                end_idx = min(start_idx + len(query_lines) + 10, len(orig_lines))
+                                for idx in range(start_idx, end_idx):
+                                    if rx.search(orig_lines[idx]):
+                                        matched_lines_found.append({
+                                            "line_number": idx + 1,
+                                            "matched_line": orig_lines[idx]
+                                        })
                             else:
-                                # fallback to deterministic ordering
-                                sorted_cols = sorted(cols_list)
-                                matched_pair = (sorted_cols[0], sorted_cols[1])
-                    
-                    # 2) 15차 예외 및 추가 비교 규칙 적용 (기준테이블 미등록 컬럼과의 비교 검출)
-                    if not match_type and len(matched_cols) >= 1:
-                        for col_lower in matched_cols:
-                            # 정규화된 norm_l_val 상에서 col_lower 와 비교되는 상대방 컬럼 추적
-                            # (단, 우변/좌변이 숫자, 따옴표 리터럴, null인 경우는 배제)
-                            pat_1a = r"\b(?:[a-zA-Z0-9_]+\.)?%s\b\s*(?:=|\!=|<>|>=|<=|>|<|\blike\b)\s*(?!\s*(?:['\"0-9]|null\b))\b([a-zA-Z0-9_.]+)\b" % re.escape(col_lower)
-                            pat_1b = r"\b([a-zA-Z0-9_.]+)\b\s*(?:=|\!=|<>|>=|<=|>|<|\blike\b)\s*(?!\s*(?:['\"0-9]|null\b))\b(?:[a-zA-Z0-9_]+\.)?%s\b" % re.escape(col_lower)
-                            pat_2 = r"\b(?:[a-zA-Z0-9_]+\.)?%s\b\s+(?:as\s+)?(?!\s*(?:['\"0-9]|null\b))\b([a-zA-Z0-9_.]+)\b" % re.escape(col_lower)
-                            
-                            m_1a = re.search(pat_1a, norm_l_val_lower)
-                            m_1b = re.search(pat_1b, norm_l_val_lower)
-                            m_2 = re.search(pat_2, norm_l_val_lower)
-                            
-                            target_col2 = None
-                            if m_1a:
-                                target_col2 = m_1a.group(1).strip().lower()
-                                match_type = "5) default 암복호화 비교 (=)"
-                            elif m_1b:
-                                target_col2 = m_1b.group(1).strip().lower()
-                                match_type = "5) default 암복호화 비교 (=)"
-                            elif m_2:
-                                target_col2 = m_2.group(1).strip().lower()
-                                match_type = "6) default 암복호화 AS/Alias 문"
-                            else:
-                                # 3) 복합 식 AS/Alias 컬럼 매핑 (예: max(...) as alias_col 또는 max(...) alias_col) - [2026-07-25 보완]
-                                #     ",max(nvl(col_a, 'a')) ins_col_b" 처럼 'as'가 생략된 표현식 구문도 추출되도록 개선
-                                alias_col = None
-                                # 1차: 닫는 괄호 ')' 뒤에 공백 후 (AS 생략 가능) 식별자(Alias)가 위치하는 패턴 탐색 (2026-07-25)
-                                for m_alias in re.finditer(r"\)\s+(?:as\s+)?([a-zA-Z0-9_]+)\b", norm_l_val_lower, re.IGNORECASE):
-                                    cand_alias = m_alias.group(1).strip().lower()
-                                    prefix_part = norm_l_val_lower[:m_alias.start()]
-                                    if re.search(r"\b%s\b" % re.escape(col_lower), prefix_part):
-                                        if cand_alias not in SQL_KEYWORDS and cand_alias not in SQL_TYPE_TOKENS:
-                                            alias_col = cand_alias
-                                            break
+                                for idx, line in enumerate(query_lines):
+                                    if rx.search(line):
+                                        matched_lines_found.append({
+                                            "line_number": idx + 1,
+                                            "matched_line": line
+                                        })
+
+                            for item in matched_lines_found:
+                                l_num = item["line_number"]
+                                l_val = item["matched_line"]
                                 
-                                # 2차: 괄호가 없는 일반 연산식 뒤 'as alias_col' 탐색 (fallback)
-                                if not alias_col:
-                                    for m_as in re.finditer(r"\bas\s+([a-zA-Z0-9_]+)\b", norm_l_val_lower, re.IGNORECASE):
-                                        cand_alias = m_as.group(1).strip().lower()
-                                        prefix_part = norm_l_val_lower[:m_as.start()]
+                                match_key = (filepath, l_num, col_lower)
+                                if match_key in seen_matches:
+                                    continue
+                                seen_matches.add(match_key)
+                                
+                                clean_l_val = strip_comments(l_val)
+                                
+                                if not rx.search(clean_l_val):
+                                    continue
+                                
+                                orig_col_name = col_to_rows[col_lower][0]["column_name"]
+                                vscode_cmd = "code -g %s:%s" % (os.path.abspath(filepath), l_num)
+                                
+                                assoc_tables = sorted(list({r.get("tbl_name") for r in col_to_rows[col_lower] if r.get("tbl_name")}))
+                                assoc_tables_str = ", ".join(assoc_tables)
+
+                                has_default_encdec = (
+                                    "default.encrypt" in l_val.lower() or 
+                                    "default.decrypt" in l_val.lower()
+                                )
+                                
+                                is_pure = is_pure_column(clean_l_val, orig_col_name)
+                                if has_default_encdec:
+                                    is_pure = False
+
+                                if is_pure:
+                                    exclude_line_count += 1
+                                    exclude_str = "[제외] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
+                                    content_str = "[내용] %s" % l_val.strip()
+                                    mid_exclude_buffer.append(exclude_str)
+                                    mid_exclude_buffer.append(content_str)
+                                    mid_exclude_buffer.append("-" * 80)
+                                    
+                                    for ref_row in col_to_rows[col_lower]:
+                                        final_dtm = ref_row.get("최종작업일시", "").strip()
+                                        if not final_dtm or final_dtm.upper() == "NONE":
+                                            final_dtm = op_dtm
+                                        result_row = dict(ref_row)
+                                        result_row.update({
+                                            "run_id": run_id,
+                                            "mid": mid,
+                                            "source_file": os.path.abspath(filepath),
+                                            "line_number": l_num,
+                                            "matched_line": l_val.strip(),
+                                            "vscode_open_cmd": vscode_cmd,
+                                            "query_text": raw_query,
+                                            "op_dtm": final_dtm
+                                        })
+                                        excluded_results.append(result_row)
+                                    continue
+
+                                if l_num not in line_to_matched_cols:
+                                    line_to_matched_cols[l_num] = set()
+                                line_to_matched_cols[l_num].add(col_lower)
+                                
+                                if l_num not in line_info_map:
+                                    line_info_map[l_num] = {
+                                        "matched_line": l_val,
+                                        "query_text": raw_query,
+                                        "clean_l_val": clean_l_val
+                                    }
+
+                                is_included = True
+                                if args.chk:
+                                    if args.chk == "default":
+                                        is_included = has_default_encdec
+                                    elif args.chk == "encdec_no":
+                                        is_included = not has_default_encdec
+                                    elif args.chk == "all":
+                                        is_included = True
+
+                                if is_included:
+                                    files_with_matches.add(filepath)
+                                    match_line_count += 1
+                                    for ref_row in col_to_rows[col_lower]:
+                                        final_dtm = ref_row.get("최종작업일시", "").strip()
+                                        if not final_dtm or final_dtm.upper() == "NONE":
+                                            final_dtm = op_dtm
+                                        result_row = dict(ref_row)
+                                        result_row.update({
+                                            "run_id": run_id,
+                                            "mid": mid,
+                                            "source_file": os.path.abspath(filepath),
+                                            "line_number": l_num,
+                                            "matched_line": l_val.strip(),
+                                            "vscode_open_cmd": vscode_cmd,
+                                            "query_text": raw_query,
+                                            "op_dtm": final_dtm
+                                        })
+                                        included_results.append(result_row)
+                                        
+                                    match_str = "[매칭] %s %s (테이블: %s)" % (vscode_cmd, orig_col_name, assoc_tables_str)
+                                    content_str = "[내용] %s" % l_val.strip()
+                                    
+                                    mid_print_buffer.append(match_str)
+                                    mid_print_buffer.append(content_str)
+                                    mid_print_buffer.append("-" * 80)
+                                else:
+                                    exclude_line_count += 1
+                                    exclude_str = "[제외] %s %s (테이블: %s, CHK필터제외)" % (vscode_cmd, orig_col_name, assoc_tables_str)
+                                    content_str = "[내용] %s" % l_val.strip()
+                                    mid_exclude_buffer.append(exclude_str)
+                                    mid_exclude_buffer.append(content_str)
+                                    mid_exclude_buffer.append("-" * 80)
+                                    
+                                    for ref_row in col_to_rows[col_lower]:
+                                        final_dtm = ref_row.get("최종작업일시", "").strip()
+                                        if not final_dtm or final_dtm.upper() == "NONE":
+                                            final_dtm = op_dtm
+                                        result_row = dict(ref_row)
+                                        result_row.update({
+                                            "run_id": run_id,
+                                            "mid": mid,
+                                            "source_file": os.path.abspath(filepath),
+                                            "line_number": l_num,
+                                            "matched_line": l_val.strip(),
+                                            "vscode_open_cmd": vscode_cmd,
+                                            "query_text": raw_query,
+                                            "op_dtm": final_dtm
+                                        })
+                                        excluded_results.append(result_row)
+
+                for l_num, matched_cols in line_to_matched_cols.items():
+                    info = line_info_map[l_num]
+                    if "row_number" in info["matched_line"].lower():
+                        continue
+                    clean_l_val = info["clean_l_val"]
+                    
+                    clean_l_val = re.sub(
+                        r"(?i)\bis\s+(?:not\s+)?null\b",
+                        " ",
+                        clean_l_val
+                    )
+                    clean_l_val = re.sub(
+                        r"(?i)\bwhen\b.*?\bthen\b",
+                        "then",
+                        clean_l_val
+                    )
+
+                    l_val_lower = info["matched_line"].lower()
+                    
+                    norm_l_val = normalize_diff_expression(clean_l_val)
+                    norm_l_val = re.sub(
+                        r"(?i)\bis\s+(?:not\s+)?null\b",
+                        " ",
+                        norm_l_val
+                    )
+                    norm_l_val = re.sub(
+                        r"(?i)\bwhen\b.*?\bthen\b",
+                        "then",
+                        norm_l_val
+                    )
+                    norm_l_val = remove_if_condition(norm_l_val)
+                    norm_l_val_lower = norm_l_val.lower()
+                    
+                    match_type = None
+                    matched_pair = None
+
+                    eq_pair = extract_ordered_pair_from_equal_expression(norm_l_val_lower)
+                    if eq_pair:
+                        left_col = normalize_compare_token(eq_pair[0])
+                        right_col = normalize_compare_token(eq_pair[1])
+                        if left_col and right_col and left_col != right_col:
+                            matched_pair = (left_col, right_col)
+                            if re.search(r"\s*(!=|<>|>=|<=|>|<|\blike\b|\bin\b)\s*", norm_l_val_lower):
+                                match_type = "4) 기타 비교 구문"
+                            else:
+                                match_type = "5) 비교식 (=)"
+                    if not match_type:
+                        if len(matched_cols) >= 2:
+                            match_type = check_diff_cols_match(norm_l_val_lower, matched_cols)
+                            if match_type:
+                                cols_list = list(matched_cols)
+                                cols_pos = [(norm_l_val_lower.find(c), c) for c in cols_list]
+                                cols_pos = [p for p in cols_pos if p[0] != -1]
+                                cols_pos.sort(key=lambda x: x[0])
+                                if len(cols_pos) >= 2:
+                                    matched_pair = (cols_pos[0][1], cols_pos[1][1])
+                                else:
+                                    sorted_cols = sorted(cols_list)
+                                    matched_pair = (sorted_cols[0], sorted_cols[1])
+                        
+                        if not match_type and len(matched_cols) >= 1:
+                            for col_lower in matched_cols:
+                                pat_1a = r"\b(?:[a-zA-Z0-9_]+\.)?%s\b\s*(?:=|\!=|<>|>=|<=|>|<|\blike\b)\s*(?!\s*(?:['\"0-9]|null\b))\b([a-zA-Z0-9_.]+)\b" % re.escape(col_lower)
+                                pat_1b = r"\b([a-zA-Z0-9_.]+)\b\s*(?:=|\!=|<>|>=|<=|>|<|\blike\b)\s*(?!\s*(?:['\"0-9]|null\b))\b(?:[a-zA-Z0-9_]+\.)?%s\b" % re.escape(col_lower)
+                                pat_2 = r"\b(?:[a-zA-Z0-9_]+\.)?%s\b\s+(?:as\s+)?(?!\s*(?:['\"0-9]|null\b))\b([a-zA-Z0-9_.]+)\b" % re.escape(col_lower)
+                                
+                                m_1a = re.search(pat_1a, norm_l_val_lower)
+                                m_1b = re.search(pat_1b, norm_l_val_lower)
+                                m_2 = re.search(pat_2, norm_l_val_lower)
+                                
+                                target_col2 = None
+                                if m_1a:
+                                    target_col2 = m_1a.group(1).strip().lower()
+                                    match_type = "5) default 암복호화 비교 (=)"
+                                elif m_1b:
+                                    target_col2 = m_1b.group(1).strip().lower()
+                                    match_type = "5) default 암복호화 비교 (=)"
+                                elif m_2:
+                                    target_col2 = m_2.group(1).strip().lower()
+                                    match_type = "6) default 암복호화 AS/Alias 문"
+                                else:
+                                    alias_col = None
+                                    for m_alias in re.finditer(r"\)\s*(?:as\s+)?\s*([a-zA-Z0-9_]+)\b", norm_l_val_lower, re.IGNORECASE):
+                                        cand_alias = m_alias.group(1).strip().lower()
+                                        prefix_part = norm_l_val_lower[:m_alias.start()]
                                         if re.search(r"\b%s\b" % re.escape(col_lower), prefix_part):
                                             if cand_alias not in SQL_KEYWORDS and cand_alias not in SQL_TYPE_TOKENS:
                                                 alias_col = cand_alias
                                                 break
+                                    
+                                    if not alias_col:
+                                        for m_as in re.finditer(r"\bas\s+([a-zA-Z0-9_]+)\b", norm_l_val_lower, re.IGNORECASE):
+                                            cand_alias = m_as.group(1).strip().lower()
+                                            prefix_part = norm_l_val_lower[:m_as.start()]
+                                            if re.search(r"\b%s\b" % re.escape(col_lower), prefix_part):
+                                                if cand_alias not in SQL_KEYWORDS and cand_alias not in SQL_TYPE_TOKENS:
+                                                    alias_col = cand_alias
+                                                    break
 
-                                if alias_col:
-                                    target_col2 = alias_col
-                                    match_type = "6) default 암복호화 AS/Alias 문"
-                                
-                            if target_col2:
-                                if "." in target_col2:
-                                    target_col2 = target_col2.split(".")[-1]
-                                if not is_real_compare_column_token(target_col2):
-                                    target_col2 = None
-                                    match_type = None
-                                else:
-                                    # SQL 예약어 필터링
-                                    if target_col2 in SQL_KEYWORDS:
+                                    if alias_col:
+                                        target_col2 = alias_col
+                                        match_type = "6) default 암복호화 AS/Alias 문"
+                                    
+                                if target_col2:
+                                    if "." in target_col2:
+                                        target_col2 = target_col2.split(".")[-1]
+                                    if not is_real_compare_column_token(target_col2):
                                         target_col2 = None
                                         match_type = None
-                                    if target_col2 and target_col2 != col_lower:
-                                        matched_pair = (col_lower, target_col2)
+                                    else:
+                                        if target_col2 in SQL_KEYWORDS:
+                                            target_col2 = None
+                                            match_type = None
+                                        if target_col2 and target_col2 != col_lower:
+                                            matched_pair = (col_lower, target_col2)
+                                            break
+
+                                if not matched_pair and not target_col2:
+                                    fallback_cols = find_matched_columns_in_expression(norm_l_val_lower, matched_cols, {col_lower})
+                                    if fallback_cols:
+                                        matched_pair = (col_lower, fallback_cols[0])
+                                        match_type = "6) default 암복호화 함수 인자 컬럼"
                                         break
 
-                            if not matched_pair and not target_col2:
-                                fallback_cols = find_matched_columns_in_expression(norm_l_val_lower, matched_cols, {col_lower})
-                                if fallback_cols:
-                                    matched_pair = (col_lower, fallback_cols[0])
-                                    match_type = "6) default 암복호화 함수 인자 컬럼"
-                                    break
+                    if match_type and matched_pair:
+                        pair_in_order = list(matched_pair)
+                        if not all(is_real_compare_column_token(c) for c in pair_in_order):
+                            continue
+                        sorted_cols_str = ", ".join(sorted(pair_in_order))
 
-                if match_type and matched_pair:
-                    # preserve the left-to-right order for compare_col1/compare_col2
-                    pair_in_order = list(matched_pair)
-                    if not all(is_real_compare_column_token(c) for c in pair_in_order):
-                        continue
-                    # for uniqueness key, keep sorted representation to avoid order variants
-                    sorted_cols_str = ", ".join(sorted(pair_in_order))
-
-                    diff_key = (filepath, l_num, sorted_cols_str)
-                    if diff_key in seen_diff_matches:
-                        continue
-                    seen_diff_matches.add(diff_key)
-                    
-                    # 기준 정보 수집 (기준 테이블에 등록된 컬럼 기준)
-                    rep_col = matched_pair[0]
-                    if rep_col not in col_to_rows and len(matched_pair) > 1:
-                        rep_col = matched_pair[1]
-                    
-                    if rep_col not in col_to_rows:
-                        continue
+                        diff_key = (filepath, l_num, sorted_cols_str)
+                        if diff_key in seen_diff_matches:
+                            continue
+                        seen_diff_matches.add(diff_key)
                         
-                    rep_row = col_to_rows[rep_col][0]
-                    
-                    # db_name, tbl_name 수집
-                    assoc_tbls = set()
-                    assoc_dbs = set()
-                    for c in matched_pair:
-                        if c in col_to_rows:
-                            for r in col_to_rows[c]:
-                                if r.get("tbl_name"): assoc_tbls.add(r.get("tbl_name"))
-                                if r.get("db_name"): assoc_dbs.add(r.get("db_name"))
-                        else:
-                            if rep_row.get("tbl_name"): assoc_tbls.add(rep_row.get("tbl_name"))
-                            if rep_row.get("db_name"): assoc_dbs.add(rep_row.get("db_name"))
-                    
-                    # 17차 수정: 비교 첫번째/두번째 칼럼 추출 및 컨버전 정보
-                    compare_col1 = ""
-                    compare_col2 = ""
-                    if len(pair_in_order) >= 2:
-                        # maintain left-to-right: first element -> compare_col1, second -> compare_col2
-                        c1 = pair_in_order[0]
-                        if c1 in col_to_rows:
-                            orig_c1 = col_to_rows[c1][0]["column_name"]
-                            key1 = col_to_rows[c1][0].get("tobe_enc_key", "")
-                            conv_k1 = convert_key_to_code(key1)
-                            if not conv_k1:
+                        rep_col = matched_pair[0]
+                        if rep_col not in col_to_rows and len(matched_pair) > 1:
+                            rep_col = matched_pair[1]
+                        
+                        if rep_col not in col_to_rows:
+                            continue
+                            
+                        rep_row = col_to_rows[rep_col][0]
+                        
+                        assoc_tbls = set()
+                        assoc_dbs = set()
+                        for c in matched_pair:
+                            if c in col_to_rows:
+                                for r in col_to_rows[c]:
+                                    if r.get("tbl_name"): assoc_tbls.add(r.get("tbl_name"))
+                                    if r.get("db_name"): assoc_dbs.add(r.get("db_name"))
+                            else:
+                                if rep_row.get("tbl_name"): assoc_tbls.add(rep_row.get("tbl_name"))
+                                if rep_row.get("db_name"): assoc_dbs.add(rep_row.get("db_name"))
+                        
+                        compare_col1 = ""
+                        compare_col2 = ""
+                        if len(pair_in_order) >= 2:
+                            c1 = pair_in_order[0]
+                            if c1 in col_to_rows:
+                                orig_c1 = col_to_rows[c1][0]["column_name"]
+                                key1 = col_to_rows[c1][0].get("tobe_enc_key", "")
+                                conv_k1 = convert_key_to_code(key1)
+                                if not conv_k1:
+                                    conv_k1 = "99"
+                            else:
+                                m_orig = re.search(r"\b%s\b" % re.escape(c1), info["matched_line"], re.IGNORECASE)
+                                orig_c1 = m_orig.group(0) if m_orig else c1
                                 conv_k1 = "99"
-                            compare_col1 = "%s:%s" % (orig_c1, conv_k1)
-                        else:
-                            compare_col1 = "%s:99" % c1
 
-                        c2 = pair_in_order[1]
-                        if c2 in col_to_rows:
-                            orig_c2 = col_to_rows[c2][0]["column_name"]
-                            key2 = col_to_rows[c2][0].get("tobe_enc_key", "")
-                            conv_k2 = convert_key_to_code(key2)
-                            if not conv_k2:
+                            c2 = pair_in_order[1]
+                            if c2 in col_to_rows:
+                                orig_c2 = col_to_rows[c2][0]["column_name"]
+                                key2 = col_to_rows[c2][0].get("tobe_enc_key", "")
+                                conv_k2 = convert_key_to_code(key2)
+                                if not conv_k2:
+                                    conv_k2 = "99"
+                            else:
+                                m_orig = re.search(r"\b%s\b" % re.escape(c2), info["matched_line"], re.IGNORECASE)
+                                orig_c2 = m_orig.group(0) if m_orig else c2
                                 conv_k2 = "99"
+
+                            # [2026-07-25 보완] 미등록 별칭/비교 컬럼의 key컨버전값 상속 및 연동 처리
+                            # 라인 내 default.encrypt / default.decrypt 사용 키 코드 추출 (예: 'e1', 'e2', 'key1' 등)
+                            line_enc_key_code = ""
+                            m_enc_key = re.search(r"(?i)default\.(?:encrypt|decrypt)\s*\([^)]*?,\s*['\"]?([a-zA-Z0-9_]+)['\"]?\s*\)", info["matched_line"])
+                            if m_enc_key:
+                                line_enc_key_code = convert_key_to_code(m_enc_key.group(1))
+
+                            if conv_k1 == "99":
+                                if conv_k2 != "99":
+                                    conv_k1 = conv_k2
+                                elif line_enc_key_code:
+                                    conv_k1 = line_enc_key_code
+
+                            if conv_k2 == "99":
+                                if conv_k1 != "99":
+                                    conv_k2 = conv_k1
+                                elif line_enc_key_code:
+                                    conv_k2 = line_enc_key_code
+
+                            compare_col1 = "%s:%s" % (orig_c1, conv_k1)
                             compare_col2 = "%s:%s" % (orig_c2, conv_k2)
-                        else:
-                            compare_col2 = "%s:99" % c2
 
-                    vscode_cmd = "code -g %s:%s" % (os.path.abspath(filepath), l_num)
-                    
-                    final_dtm = rep_row.get("최종작업일시", "").strip()
-                    if not final_dtm or final_dtm.upper() == "NONE":
-                        final_dtm = op_dtm
-                    diff_row = {
-                        "run_id": run_id,
-                        "mid": mid,
-                        "db_name": ", ".join(sorted(list(assoc_dbs))),
-                        "tbl_name": ", ".join(sorted(list(assoc_tbls))),
-                        "column_name": sorted_cols_str,
-                        "type_name": rep_row.get("type_name", ""),
-                        "integer_idx": rep_row.get("integer_idx", ""),
-                        "mig_dec": rep_row.get("mig_dec", ""),
-                        "tobe_enc_key": rep_row.get("tobe_enc_key", ""),
-                        "compare_col1": compare_col1,
-                        "compare_col2": compare_col2,
-                        "tobe_enc_rsn": "유형: %s / %s" % (match_type, rep_row.get("tobe_enc_rsn", "")),
-                        "asis_enc_yn": rep_row.get("asis_enc_yn", ""),
-                        "source_file": os.path.abspath(filepath),
-                        "line_number": l_num,
-                        "matched_line": info["matched_line"].strip(),
-                        "vscode_open_cmd": vscode_cmd,
-                        "query_text": info["query_text"],
-                        "op_dtm": final_dtm
-                    }
-                    diff_cols_results.append(diff_row)
-                    diff_cols_line_count += 1
+                        vscode_cmd = "code -g %s:%s" % (os.path.abspath(filepath), l_num)
+                        
+                        final_dtm = rep_row.get("최종작업일시", "").strip()
+                        if not final_dtm or final_dtm.upper() == "NONE":
+                            final_dtm = op_dtm
+                        diff_row = {
+                            "run_id": run_id,
+                            "mid": mid,
+                            "db_name": ", ".join(sorted(list(assoc_dbs))),
+                            "tbl_name": ", ".join(sorted(list(assoc_tbls))),
+                            "column_name": sorted_cols_str,
+                            "type_name": rep_row.get("type_name", ""),
+                            "integer_idx": rep_row.get("integer_idx", ""),
+                            "mig_dec": rep_row.get("mig_dec", ""),
+                            "tobe_enc_key": rep_row.get("tobe_enc_key", ""),
+                            "compare_col1": compare_col1,
+                            "compare_col2": compare_col2,
+                            "tobe_enc_rsn": "유형: %s / %s" % (match_type, rep_row.get("tobe_enc_rsn", "")),
+                            "asis_enc_yn": rep_row.get("asis_enc_yn", ""),
+                            "source_file": os.path.abspath(filepath),
+                            "line_number": l_num,
+                            "matched_line": info["matched_line"].strip(),
+                            "vscode_open_cmd": vscode_cmd,
+                            "query_text": info["query_text"],
+                            "op_dtm": final_dtm
+                        }
+                        diff_cols_results.append(diff_row)
+                        diff_cols_line_count += 1
 
-        csv_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s.csv" % (ref_tbl_only, out_suffix)))
-        print_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_print.txt" % (ref_tbl_only, out_suffix)))
-        ex_txt_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_exclude.txt" % (ref_tbl_only, out_suffix)))
-        diff_csv_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_diff_cols.csv" % (ref_tbl_only, out_suffix)))
+            csv_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s.csv" % (ref_tbl_only, out_suffix)))
+            print_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_print.txt" % (ref_tbl_only, out_suffix)))
+            ex_txt_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_exclude.txt" % (ref_tbl_only, out_suffix)))
+            diff_csv_path = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_diff_cols.csv" % (ref_tbl_only, out_suffix)))
 
-        results_default = []
-        results_encdec_no = []
-        if args.chk == "all":
-            for r in included_results:
-                line_lower = r.get("matched_line", "").lower()
-                if "default.encrypt" in line_lower or "default.decrypt" in line_lower:
-                    results_default.append(r)
-                else:
-                    results_encdec_no.append(r)
-            
-            total_val, ok_val, nok_val = verify_default_results(results_default)
-
-        if included_results:
-            save_csv(included_results, csv_path, CSV_FIELDNAMES, op_dtm)
-            print("[INFO] 파일 저장 완료: %s  (%d 건)" % (csv_path, len(included_results)))
-
+            results_default = []
+            results_encdec_no = []
             if args.chk == "all":
-                csv_path_default = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_default.csv" % (ref_tbl_only, out_suffix)))
-                csv_path_encdec_no = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_encdec_no.csv" % (ref_tbl_only, out_suffix)))
+                for r in included_results:
+                    line_lower = r.get("matched_line", "").lower()
+                    if "default.encrypt" in line_lower or "default.decrypt" in line_lower:
+                        results_default.append(r)
+                    else:
+                        results_encdec_no.append(r)
                 
-                save_csv(results_default, csv_path_default, CSV_FIELDNAMES + ["chk_result"], op_dtm)
-                print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
-                
-                save_csv(results_encdec_no, csv_path_encdec_no, CSV_FIELDNAMES, op_dtm)
-                print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
-        else:
-            print("[INFO] '%s' MID에 대해 추출된 매칭 결과 행이 없습니다. (결과 파일 미생성)" % mid)
+                total_val, ok_val, nok_val = verify_default_results(results_default)
 
-        if diff_cols_results:
-            save_csv(diff_cols_results, diff_csv_path, DIFF_CSV_FIELDNAMES, op_dtm)
-            print("[INFO] 파일 저장 완료 (서로 다른 컬럼 비교): %s  (%d 건)" % (diff_csv_path, len(diff_cols_results)))
-        else:
-            print("[INFO] '%s' MID에 대해 추출된 서로 다른 컬럼 비교 매칭 결과가 없습니다. (비교 결과 파일 미생성)" % mid)
-
-        if args.db:
             if included_results:
-                print("[DB_LOAD] 결과데이터 적재 시작: mid=%s, rows=%d" % (mid, len(included_results)))
-                batch_all = build_db_batch(included_results, run_id, mid, op_dtm, include_chk_result=False)
-                db_load_table(mysql_conf, fq_out_table, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_all, mid, "결과데이터")
+                save_csv(included_results, csv_path, CSV_FIELDNAMES, op_dtm)
+                print("[INFO] 파일 저장 완료: %s  (%d 건)" % (csv_path, len(included_results)))
 
                 if args.chk == "all":
-                    fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
-                    print("[DB_LOAD] 결과데이터_default 적재 시작: mid=%s, rows=%d" % (mid, len(results_default)))
-                    batch_default = build_db_batch(results_default, run_id, mid, op_dtm, include_chk_result=True)
-                    db_load_table(mysql_conf, fq_out_table_default, _DDL_CREATE_RESULT_DEFAULT, _SQL_INSERT_RESULT_DEFAULT, batch_default, mid, "결과데이터_default")
+                    csv_path_default = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_default.csv" % (ref_tbl_only, out_suffix)))
+                    csv_path_encdec_no = os.path.abspath(os.path.join(out_dir, "p190872_%s_%s_encdec_no.csv" % (ref_tbl_only, out_suffix)))
                     
-                    fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
-                    print("[DB_LOAD] 결과데이터_encdec_no 적재 시작: mid=%s, rows=%d" % (mid, len(results_encdec_no)))
-                    batch_encdec_no = build_db_batch(results_encdec_no, run_id, mid, op_dtm, include_chk_result=False)
-                    db_load_table(mysql_conf, fq_out_table_encdec_no, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_encdec_no, mid, "결과데이터_encdec_no")
-            
-            if excluded_results:
-                fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
-                print("[DB_LOAD] 제외데이터 적재 시작: mid=%s, rows=%d" % (mid, len(excluded_results)))
-                batch_exclude = build_db_batch(excluded_results, run_id, mid, op_dtm, include_chk_result=False)
-                db_load_table(mysql_conf, fq_out_table_exclude, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_exclude, mid, "제외데이터")
+                    save_csv(results_default, csv_path_default, CSV_FIELDNAMES + ["chk_result"], op_dtm)
+                    print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
+                    
+                    save_csv(results_encdec_no, csv_path_encdec_no, CSV_FIELDNAMES, op_dtm)
+                    print("[INFO] [all분리] 파일 저장 완료: %s  (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
+            else:
+                print("[INFO] '%s' MID에 대해 추출된 매칭 결과 행이 없습니다. (결과 파일 미생성)" % mid)
 
             if diff_cols_results:
-                fq_out_table_diff_cols = make_fq(out_schema, out_tbl_only + "_diff_cols")
-                print("[DB_LOAD] 비교데이터(diff_cols) 적재 시작: mid=%s, rows=%d" % (mid, len(diff_cols_results)))
-                batch_diff_cols = build_db_batch_diff_cols(diff_cols_results, run_id, mid, op_dtm)
-                db_load_table(mysql_conf, fq_out_table_diff_cols, _DDL_CREATE_DIFF_COLS, _SQL_INSERT_DIFF_COLS, batch_diff_cols, mid, "비교데이터(diff_cols)")
-
-        if len(mid_exclude_buffer) > 3:
-            with codecs.open(ex_txt_path, "w", encoding="utf-8") as ef:
-                ef.write("\n".join(mid_exclude_buffer) + "\n")
-            print("[INFO] 제외행 내용 파일 생성 완료: %s" % ex_txt_path)
-
-        summary_lines = []
-        summary_lines.append("=" * 80)
-        summary_lines.append(" [분석 완료 요약 - MID: %s]" % mid)
-        summary_lines.append("=" * 80)
-        summary_lines.append("  - 검색 대상 기준 테이블   : %s" % args.ref_table)
-        summary_lines.append("  - 검색 대상 소스 파일 수   : %d 개" % total_files_scanned)
-        summary_lines.append("  - 매칭 발생 소스 파일 수   : %d 개" % len(files_with_matches))
-        summary_lines.append("  - 매칭 건수 (포함)          : %d 건" % match_line_count)
-        if args.chk == "all":
-            summary_lines.append("     * default 암복호화 매칭 : %d 건" % len(results_default))
-            summary_lines.append("     * 일반 가공 칼럼 매칭   : %d 건" % len(results_encdec_no))
-        summary_lines.append("  - 매칭 건수 (제외)          : %d 건" % exclude_line_count)
-        summary_lines.append("  - 매칭 건수 (서로다른컬럼비교): %d 건" % diff_cols_line_count)
-        summary_lines.append("-" * 80)
-        summary_lines.append("  1. 생성 파일 정보")
-        if included_results:
-            summary_lines.append("     - 결과 CSV 파일   : %s (%d 건)" % (csv_path, len(included_results)))
-            if args.chk == "all":
-                if total_val > 0:
-                    summary_lines.append("     - default 분리 CSV : %s (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
-                else:
-                    summary_lines.append("     - default 분리 CSV : %s (%d 건)" % (csv_path_default, len(results_default)))
-                summary_lines.append("     - encdec_no 분리   : %s (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
-            summary_lines.append("     - 화면 출력 파일  : %s (%d 건)" % (print_path, match_line_count))
-        else:
-            summary_lines.append("     - 결과 CSV 파일   : (생성 없음)")
-            summary_lines.append("     - 화면 출력 파일  : (생성 없음)")
-            
-        if diff_cols_results:
-            summary_lines.append("     - 비교 CSV 파일   : %s (%d 건)" % (diff_csv_path, len(diff_cols_results)))
-        else:
-            summary_lines.append("     - 비교 CSV 파일   : (생성 없음)")
-
-        if len(mid_exclude_buffer) > 3:
-            summary_lines.append("     - 제외 로그 파일  : %s (%d 건)" % (ex_txt_path, exclude_line_count))
-        else:
-            summary_lines.append("     - 제외 로그 파일  : (생성 없음)")
-            
-        summary_lines.append("  2. DB 적재 정보")
-        if args.db:
-            if included_results:
-                summary_lines.append("     - 결과 DB 테이블  : %s (%d 건)" % (fq_out_table, len(included_results)))
-                if args.chk == "all":
-                    fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
-                    fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
-                    summary_lines.append("     - default DB 테이블: %s (%d 건)" % (fq_out_table_default, len(results_default)))
-                    summary_lines.append("     - encdec_no 테이블 : %s (%d 건)" % (fq_out_table_encdec_no, len(results_encdec_no)))
+                save_csv(diff_cols_results, diff_csv_path, DIFF_CSV_FIELDNAMES, op_dtm)
+                print("[INFO] 파일 저장 완료 (서로 다른 컬럼 비교): %s  (%d 건)" % (diff_csv_path, len(diff_cols_results)))
             else:
-                summary_lines.append("     - 결과 DB 테이블  : (적재 없음)")
+                print("[INFO] '%s' MID에 대해 추출된 서로 다른 컬럼 비교 매칭 결과가 없습니다. (비교 결과 파일 미생성)" % mid)
+
+            # ============================================================
+            # v10: DB 적재 시 사전 생성해 둔 db_conn 재사용
+            # ============================================================
+            if args.db and db_conn:
+                if included_results:
+                    print("[DB_LOAD] 결과데이터 적재 시작: mid=%s, rows=%d" % (mid, len(included_results)))
+                    batch_all = build_db_batch(included_results, run_id, mid, op_dtm, include_chk_result=False)
+                    db_load_table(db_conn, fq_out_table, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_all, mid, "결과데이터")
+
+                    if args.chk == "all":
+                        fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
+                        print("[DB_LOAD] 결과데이터_default 적재 시작: mid=%s, rows=%d" % (mid, len(results_default)))
+                        batch_default = build_db_batch(results_default, run_id, mid, op_dtm, include_chk_result=True)
+                        db_load_table(db_conn, fq_out_table_default, _DDL_CREATE_RESULT_DEFAULT, _SQL_INSERT_RESULT_DEFAULT, batch_default, mid, "결과데이터_default")
+                        
+                        fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
+                        print("[DB_LOAD] 결과데이터_encdec_no 적재 시작: mid=%s, rows=%d" % (mid, len(results_encdec_no)))
+                        batch_encdec_no = build_db_batch(results_encdec_no, run_id, mid, op_dtm, include_chk_result=False)
+                        db_load_table(db_conn, fq_out_table_encdec_no, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_encdec_no, mid, "결과데이터_encdec_no")
                 
-            if excluded_results:
-                fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
-                summary_lines.append("     - 제외 DB 테이블  : %s (%d 건)" % (fq_out_table_exclude, len(excluded_results)))
-            else:
-                summary_lines.append("     - 제외 DB 테이블  : (적재 없음)")
+                if excluded_results:
+                    fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
+                    print("[DB_LOAD] 제외데이터 적재 시작: mid=%s, rows=%d" % (mid, len(excluded_results)))
+                    batch_exclude = build_db_batch(excluded_results, run_id, mid, op_dtm, include_chk_result=False)
+                    db_load_table(db_conn, fq_out_table_exclude, _DDL_CREATE_RESULT, _SQL_INSERT_RESULT, batch_exclude, mid, "제외데이터")
 
-            if diff_cols_results:
-                fq_out_table_diff_cols = make_fq(out_schema, out_tbl_only + "_diff_cols")
-                summary_lines.append("     - 비교 DB 테이블  : %s (%d 건)" % (fq_out_table_diff_cols, len(diff_cols_results)))
+                if diff_cols_results:
+                    fq_out_table_diff_cols = make_fq(out_schema, out_tbl_only + "_diff_cols")
+                    print("[DB_LOAD] 비교데이터(diff_cols) 적재 시작: mid=%s, rows=%d" % (mid, len(diff_cols_results)))
+                    batch_diff_cols = build_db_batch_diff_cols(diff_cols_results, run_id, mid, op_dtm)
+                    db_load_table(db_conn, fq_out_table_diff_cols, _DDL_CREATE_DIFF_COLS, _SQL_INSERT_DIFF_COLS, batch_diff_cols, mid, "비교데이터(diff_cols)")
+
+            if len(mid_exclude_buffer) > 3:
+                with codecs.open(ex_txt_path, "w", encoding="utf-8") as ef:
+                    ef.write("\n".join(mid_exclude_buffer) + "\n")
+                print("[INFO] 제외행 내용 파일 생성 완료: %s" % ex_txt_path)
+
+            summary_lines = []
+            summary_lines.append("=" * 80)
+            summary_lines.append(" [분석 완료 요약 - MID: %s]" % mid)
+            summary_lines.append("=" * 80)
+            summary_lines.append("  - 검색 대상 기준 테이블   : %s" % args.ref_table)
+            summary_lines.append("  - 검색 대상 소스 파일 수   : %d 개" % total_files_scanned)
+            summary_lines.append("  - 매칭 발생 소스 파일 수   : %d 개" % len(files_with_matches))
+            summary_lines.append("  - 매칭 건수 (포함)          : %d 건" % match_line_count)
+            if args.chk == "all":
+                summary_lines.append("     * default 암복호화 매칭 : %d 건" % len(results_default))
+                summary_lines.append("     * 일반 가공 칼럼 매칭   : %d 건" % len(results_encdec_no))
+            summary_lines.append("  - 매칭 건수 (제외)          : %d 건" % exclude_line_count)
+            summary_lines.append("  - 매칭 건수 (서로다른컬럼비교): %d 건" % diff_cols_line_count)
+            summary_lines.append("-" * 80)
+            summary_lines.append("  1. 생성 파일 정보")
+            if included_results:
+                summary_lines.append("     - 결과 CSV 파일   : %s (%d 건)" % (csv_path, len(included_results)))
+                if args.chk == "all":
+                    if total_val > 0:
+                        summary_lines.append("     - default 분리 CSV : %s (%d 건 - OK: %d, NOK: %d)" % (csv_path_default, len(results_default), ok_val, nok_val))
+                    else:
+                        summary_lines.append("     - default 분리 CSV : %s (%d 건)" % (csv_path_default, len(results_default)))
+                    summary_lines.append("     - encdec_no 분리   : %s (%d 건)" % (csv_path_encdec_no, len(results_encdec_no)))
+                summary_lines.append("     - 화면 출력 파일  : %s (%d 건)" % (print_path, match_line_count))
             else:
-                summary_lines.append("     - 비교 DB 테이블  : (적재 없음)")
-        else:
-            summary_lines.append("     - 결과/제외/비교 DB 테이블 : (적재 없음)")
+                summary_lines.append("     - 결과 CSV 파일   : (생성 없음)")
+                summary_lines.append("     - 화면 출력 파일  : (생성 없음)")
+                
+            if diff_cols_results:
+                summary_lines.append("     - 비교 CSV 파일   : %s (%d 건)" % (diff_csv_path, len(diff_cols_results)))
+            else:
+                summary_lines.append("     - 비교 CSV 파일   : (생성 없음)")
+
+            if len(mid_exclude_buffer) > 3:
+                summary_lines.append("     - 제외 로그 파일  : %s (%d 건)" % (ex_txt_path, exclude_line_count))
+            else:
+                summary_lines.append("     - 제외 로그 파일  : (생성 없음)")
+                
+            summary_lines.append("  2. DB 적재 정보")
+            if args.db:
+                if included_results:
+                    summary_lines.append("     - 결과 DB 테이블  : %s (%d 건)" % (fq_out_table, len(included_results)))
+                    if args.chk == "all":
+                        fq_out_table_default = make_fq(out_schema, out_tbl_only + "_default")
+                        fq_out_table_encdec_no = make_fq(out_schema, out_tbl_only + "_encdec_no")
+                        summary_lines.append("     - default DB 테이블: %s (%d 건)" % (fq_out_table_default, len(results_default)))
+                        summary_lines.append("     - encdec_no 테이블 : %s (%d 건)" % (fq_out_table_encdec_no, len(results_encdec_no)))
+                else:
+                    summary_lines.append("     - 결과 DB 테이블  : (적재 없음)")
+                    
+                if excluded_results:
+                    fq_out_table_exclude = make_fq(out_schema, out_tbl_only + "_exclude")
+                    summary_lines.append("     - 제외 DB 테이블  : %s (%d 건)" % (fq_out_table_exclude, len(excluded_results)))
+                else:
+                    summary_lines.append("     - 제외 DB 테이블  : (적재 없음)")
+
+                if diff_cols_results:
+                    fq_out_table_diff_cols = make_fq(out_schema, out_tbl_only + "_diff_cols")
+                    summary_lines.append("     - 비교 DB 테이블  : %s (%d 건)" % (fq_out_table_diff_cols, len(diff_cols_results)))
+                else:
+                    summary_lines.append("     - 비교 DB 테이블  : (적재 없음)")
+            else:
+                summary_lines.append("     - 결과/제외/비교 DB 테이블 : (적재 없음)")
         summary_lines.append("=" * 80)
 
         for line in summary_lines:
@@ -1964,6 +1971,17 @@ def main():
             with codecs.open(print_path, "w", encoding="utf-8") as pf:
                 pf.write("\n".join(mid_print_buffer) + "\n")
             print("[INFO] 화면출력내용 파일 생성 완료: %s" % print_path)
+
+    finally:
+        # ============================================================
+        # v10: 단일 커넥션 1회 안전하게 클로즈
+        # ============================================================
+        if db_conn:
+            try:
+                db_conn.close()
+                print("[INFO] DB 단일 커넥션 닫기 완료")
+            except Exception:
+                pass
 
     end_time = datetime.now()
     elapsed_time = end_time - start_time
