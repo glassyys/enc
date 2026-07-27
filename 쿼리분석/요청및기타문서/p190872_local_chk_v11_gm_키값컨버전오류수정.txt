@@ -1,0 +1,60 @@
+이소스에서  compare_col1과 compare_col2에서 "칼럼명:tobe_enc_key값기준 e1~e4로 컨버전 기타는 99로 처리"하는데 compare_col2 결과에서 기타 99로 처리해야할 경우인데
+compare_col1 기준인  e2 로 결과가 나온 케이스가 보이는데 이부분 검토후 수정부탁
+내가 예상해본 내용은
+원인이 검색기준테이블을 잘못 체크한 것인지 compare_col1의 결과값을 동일하게 처리했는지 확인요청
+이상이 발견된 케이스는 ",nvl(d.CTZ_CORP_BIZ_SER_NUM,default.encrypt('#','e1'))   CTZ_CORP_NUM2" 와 비슷한 유형이고 "유형: 6)" 로 결과생성되었습니다.
+
+--> p190872_local_chk_v11_gm.py 으로 생성
+
+버그 위치 파악 후 상속 제거하고 증거 기반 수정 진행
+확인했습니다. 정확히 예상하신 부분입니다. 코드를 보면:
+
+python
+if conv_k1 == "99":
+    if conv_k2 != "99":
+        conv_k1 = conv_k2          # <- 상대 컬럼 값 복사
+    elif line_enc_key_code:
+        conv_k1 = line_enc_key_code
+
+if conv_k2 == "99":
+    if conv_k1 != "99":
+        conv_k2 = conv_k1          # <- 여기가 문제: compare_col1 값을 그대로 복사
+    elif line_enc_key_code:
+        conv_k2 = line_enc_key_code
+원인: "검색기준테이블 오체크"가 아니라, compare_col1↔compare_col2 상호 키값을 무조건 복사하는 로직 자체가 문제입니다.
+
+compare_col1(등록 컬럼, 예: CTZ_CORP_BIZ_SER_NUM)은 기준테이블의 tobe_enc_key값으로 정상적으로 e2 등의 값을 갖게 됩니다.
+compare_col2(미등록 별칭, 예: CTZ_CORP_NUM2)는 원래 그 라인에 실제로 적용된 default.encrypt/decrypt(...)의 key인자(line_enc_key_code)로만 판단해야 하는데, 현재 코드는 line_enc_key_code보다 "상대 칼럼 값 그대로 복사"를 먼저 시도합니다. 그래서 그 라인에 compare_col2에 해당하는 실제 암復호화 근거가 없거나(line_enc_key_code가 비어있거나) 별개의 값인데도, 무조건 compare_col1의 e2를 그대로 베껴서 넣어버립니다. 이게 "99로 처리돼야 할 케이스가 e2로 나오는" 원인입니다.
+즉 우선순위가 잘못 설계되어 있습니다:
+
+(버그) 상대 칼럼 값 복사 → 2. 라인 내 실제 key 근거
+가 되어야 할 것이
+라인 내 실제 key 근거(line_enc_key_code) → 2. (근거 없을 때만, 그것도 신뢰도 낮음) 상대 칼럼값 복사
+로 되어 있어, 신뢰도 낮은 "상호 복사"가 신뢰도 높은 "라인상 실제 key 근거"보다 먼저 적용되어 버립니다.
+
+수정 방향: 상호 복사(상대 칼럼 값 그대로 가져오는 것) 자체를 제거하고, 미등록/누락 컬럼의 key는 오직 해당 라인에 실제로 있는 default.encrypt/decrypt(...)의 key 인자로만 보완합니다. 그 근거조차 없으면 기타(99)로 남겨둡니다.
+
+
+Compare_col1/compare_col2 key 상속 로직 수정 - 상대 컬럼 값을 무조건 복사하던 로직 제거, 라인 내 실제 default.encrypt/decrypt key 근거만으로 보완하도록 변경
+Compare_col1/compare_col2 key 상속 로직 수정 - 상대 컬럼 값을 무조건 복사하던 로직 제거, 라인 내 실제 default.encrypt/decrypt key 근거만으로 보완하도록 변경
+이제 두 가지 시나리오로 검증합니다: (1) 기존 정상 케이스가 여전히 잘 나오는지, (2) 보고하신 버그 케이스(compare_col1=e2인데 compare_col2가 실제로는 99여야 하는 경우)가 이제 올바르게 99로 나오는지.
+
+
+수정사항이 compare_col2 독립성을 올바르게 복원했음을 검증했다
+수정사항이 compare_col2 독립성을 올바르게 복원했음을 검증했다
+수정 전/후 비교 결과입니다:
+
+시나리오	compare_col1	compare_col2 (수정 전)	compare_col2 (수정 후)
+1) 정상케이스 (라인에 실제 e1 근거 있음)	e1	e1	e1 (동일, 정상)
+2) 라인에 실제 e2 근거 있음	e2	e2	e2 (동일, 정상)
+3) 라인에 encrypt/decrypt 근거가 전혀 없는 케이스	e2	e2 (버그)	99 (정상)
+시나리오 3에서 보시는 것처럼, 기존 로직은 "그 라인에 실제 암/복호화 근거가 없으면 무조건 상대 컬럼(compare_col1)의 키값을 복사"했기 때문에 원래 기타(99)로 처리돼야 할 compare_col2가 compare_col1의 e2를 그대로 물려받는 오류가 있었습니다. 수정 후에는 compare_col2가 오직 해당 라인에 실제로 존재하는 default.encrypt/decrypt(...)의 key 인자로만 채워지고, 그런 근거가 없으면 기타(99)로 정확히 유지됩니다.
+
+정리하면:
+
+원인: "검색기준테이블 오체크" 문제가 아니라, 말씀하신 대로 compare_col2가 compare_col1의 결과값을 그대로 복사하는 잘못된 상호 상속 로직이 원인이었습니다.
+수정: 상호 복사 로직을 제거하고, 미등록/키미상 컬럼은 라인 내 실제 encrypt/decrypt key 근거로만 보완하도록 변경했습니다.
+
+Presented file
+Presented file
+실제 운영 데이터로 재실행하셔서 이전에 e2로 잘못 나왔던 케이스들이 99로 정상 처리되는지, 그리고 다른 정상 케이스들이 계속 정상 유지되는지 확인 부탁드립니다.
