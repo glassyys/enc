@@ -1,0 +1,13 @@
+D:\workspace\enc\쿼리분석\sql_v12_full_new_04_col.py
+INSERT ${ins} TABLE ${T_CLS}.ACS_TB PARTITION(CO_DT ='{wk_dt}')
+SELECT COL1
+                , COL2 
+FROM ( 
+            SELECT COL_1
+                            , COL_2
+                 FROM ${T_TAT}.${ld_tbl} 
+...
+;
+이 쿼리에서 source_table를 ${T_TAT}.${ld_tbl} 이것으로 잘 추출했는데
+taget_table 로 ${T_CLS}.ACS_TB 를 추출못하는 것으로 보이는데
+파일명 sql_v12_full_new_05_col.py로 이부분 보완한 소스코드 생성부탁
