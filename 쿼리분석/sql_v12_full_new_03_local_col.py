@@ -941,6 +941,48 @@ def to_int(v):
     except Exception:
         return None
 
+
+def normalize_search_term(value):
+    if value is None:
+        return ""
+    term = str(value).strip()
+    if not term:
+        return ""
+
+    term = term.replace("（", "(").replace("）", ")").replace("，", ",")
+    term = term.strip()
+
+    # 패턴 예시: `enc`, "enc", 'enc', enc(), enc('name'), enc('#'), dec('name')
+    m = re.match(
+        r"^\s*(?:[`\"']?)?(?P<name>[A-Za-z0-9_\.]+)(?:\s*(?:[`\"']?))?\s*(?:\(\s*(?:.*?\s*)?(?:\))?)?\s*$",
+        term,
+        re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        return m.group("name").strip()
+
+    # 일반 문자열이지만 앞/뒤로 붙은 quote/backtick 만 정리
+    term = term.strip("\"'`")
+    return term.strip()
+
+
+def build_search_pattern(term):
+    term = normalize_search_term(term)
+    if not term:
+        return None
+
+    base = term.rstrip("()")
+    if re.fullmatch(r"[A-Za-z0-9_\.]+", base):
+        if "(" in str(term) or term.endswith("(") or term.endswith("()"):
+            return re.compile(r"(?<![A-Za-z0-9_])%s\s*\(" % re.escape(base), re.IGNORECASE)
+        return re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(base), re.IGNORECASE)
+
+    if re.search(r"[A-Za-z0-9_]", term):
+        return re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(term), re.IGNORECASE)
+
+    return re.compile(re.escape(term), re.IGNORECASE)
+
+
 def build_db_batch(results, mid, op_dtm):
     return [
         (
@@ -1024,17 +1066,17 @@ def main():
                     line_str = line.strip()
                     if not line_str or line_str.startswith("#"):
                         continue
-                    for c in line_str.split(","):
-                        c_clean = c.strip()
+                    for c in re.split(r"[\r\n,;\s]+", line_str):
+                        c_clean = normalize_search_term(c)
                         if c_clean:
                             cols.append(c_clean)
         except Exception as e:
             print("[ERROR] 컬럼 파일 읽기 실패: %s" % str(e))
             sys.exit(1)
             
-        filter_cols_set = set([c.strip().lower() for c in args.col.split(",") if c.strip()])
+        filter_cols_set = set([normalize_search_term(c).lower() for c in re.split(r"[\r\n,;\s]+", args.col) if normalize_search_term(c)])
     elif args.col:
-        cols = [c.strip() for c in args.col.split(",") if c.strip()]
+        cols = [normalize_search_term(c) for c in re.split(r"[\r\n,;\s]+", args.col) if normalize_search_term(c)]
     else:
         filepath = args.in_file.strip().replace("\\", os.sep).replace("/", os.sep)
         if not os.path.dirname(filepath):
@@ -1056,8 +1098,8 @@ def main():
                     line_str = line.strip()
                     if not line_str or line_str.startswith("#"):
                         continue
-                    for c in line_str.split(","):
-                        c_clean = c.strip()
+                    for c in re.split(r"[\r\n,;\s]+", line_str):
+                        c_clean = normalize_search_term(c)
                         if c_clean:
                             cols.append(c_clean)
         except Exception as e:
@@ -1150,10 +1192,10 @@ def main():
 
     compiled_col_patterns = {}
     for col_lower in col_to_rows:
-        if re.match(r"^[a-zA-Z0-9_]+$", col_lower):
-            compiled_col_patterns[col_lower] = re.compile(r"\b%s\b" % re.escape(col_lower), re.IGNORECASE)
-        else:
-            compiled_col_patterns[col_lower] = re.compile(re.escape(col_lower), re.IGNORECASE)
+        pattern = build_search_pattern(col_lower)
+        if pattern is None:
+            continue
+        compiled_col_patterns[col_lower] = pattern
 
     out_schema, out_tbl_only = split_schema_table(args.out_table)
     fq_out_table = make_fq(out_schema, out_tbl_only)
