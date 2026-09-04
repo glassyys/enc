@@ -1,0 +1,67 @@
+Spark SQL을 Beeline으로 실행하려면, Spark Thrift Server(STS)를 먼저 띄운 뒤 Beeline(JDBC 클라이언트)으로 접속하는 방식입니다. 순서대로 정리해드립니다.
+
+1. Spark Thrift Server 실행
+
+Beeline은 JDBC 클라이언트이기 때문에, Spark 쪽에서 JDBC로 접속받을 수 있는 서버(Thrift Server)가 떠 있어야 합니다.
+
+bash
+$SPARK_HOME/sbin/start-thriftserver.sh \
+  --master yarn \
+  --deploy-mode client \
+  --hiveconf hive.server2.thrift.port=10000 \
+  --hiveconf hive.server2.thrift.bind.host=0.0.0.0 \
+  --executor-memory 4g \
+  --num-executors 4
+--master는 환경에 맞게 yarn, local[*], spark://... 등으로 지정
+포트는 기본 10000 (Hive Thrift Server와 동일 포트라 충돌 주의 — 다른 포트 쓰려면 위 옵션 변경)
+리소스(--executor-memory, --num-executors 등)는 spark-submit과 동일하게 지정 가능
+
+기동 확인:
+
+bash
+jps | grep SparkSubmit
+# 또는
+netstat -nlp | grep 10000
+2. Beeline 접속
+bash
+beeline -u "jdbc:hive2://<host>:10000/<database>" -n <user> -p <password>
+
+인증이 없는 환경(Kerberos 미적용, 단순 환경)이면:
+
+bash
+beeline -u "jdbc:hive2://localhost:10000/default"
+
+Kerberos 환경이면:
+
+bash
+beeline -u "jdbc:hive2://<host>:10000/default;principal=hive/_HOST@REALM.COM"
+3. SQL 실행 방법
+
+(1) 대화형 모드
+
+sql
+0: jdbc:hive2://localhost:10000> SELECT * FROM my_table LIMIT 10;
+
+(2) SQL 파일 실행
+
+bash
+beeline -u "jdbc:hive2://localhost:10000/default" -f query.sql
+
+(3) 단일 쿼리 인라인 실행
+
+bash
+beeline -u "jdbc:hive2://localhost:10000/default" -e "SELECT count(*) FROM my_table"
+
+(4) 결과를 파일로 저장
+
+bash
+beeline -u "jdbc:hive2://localhost:10000/default" \
+  --outputformat=csv2 \
+  -f query.sql > result.csv
+참고 사항
+Thrift Server는 하나의 SparkSession(SparkContext)을 여러 세션이 공유하는 구조라, 리소스 격리가 필요하면 spark.sql.thriftServer.incrementalCollect, dynamic allocation 등 설정을 검토하시는 게 좋습니다.
+종료는 $SPARK_HOME/sbin/stop-thriftserver.sh
+Hive Metastore를 공유하는 환경이면 hive-site.xml이 Spark의 conf 디렉토리에 있어야 테이블 메타데이터를 정상적으로 인식합니다.
+spark-sql CLI로도 직접 실행 가능하지만, 이건 JDBC(Beeline) 방식이 아니라 로컬 드라이버에서 바로 SQL을 실행하는 방식이라 여러 클라이언트가 동시 접속하는 용도로는 Thrift Server + Beeline 조합을 씁니다.
+
+혹시 클러스터가 Kerberos 인증을 쓰는 환경인지, 아니면 어떤 배포판(CDH, HDP, 오픈소스 Spark 등)인지 알려주시면 좀 더 구체적으로 맞춰드릴 수 있습니다.
