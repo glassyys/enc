@@ -58,3 +58,13 @@ Compare_col1/compare_col2 key 상속 로직 수정 - 상대 컬럼 값을 무조
 Presented file
 Presented file
 실제 운영 데이터로 재실행하셔서 이전에 e2로 잘못 나왔던 케이스들이 99로 정상 처리되는지, 그리고 다른 정상 케이스들이 계속 정상 유지되는지 확인 부탁드립니다.
+
+
+compare_col1	compare_col2 의 키 값 컨버전된 값이
+각 칼럼에 대한 검색기준테이블의 값을 별도로 확인한 것이 맞는지 검토후 보완수정 요청
+아래예시결과에서 a_col 칼럼이 key값이 없는데 99 로 처리 안되고 e2로 결과가 등록되어서
+compare_col2 의 검색기준 테이블의 key으로 결과가 생성된 것인지 확인부탁하고 이상있다면 수정된 내용으로
+p190872_local_chk_v12_gm.py 파일 생성부탁
+예시)
+compare_col1 값이 a_col:e2    
+compare_col2 값이 b_col:e2    
