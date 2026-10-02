@@ -529,3 +529,20 @@ D:\workspace\enc\쿼리분석\p190872_local_chk_v09_gm.py
 -- 20250715
 아래 소스 처리시작시간과 종료시간 출력문 표시되도록 추가수정
 D:\workspace\enc\쿼리분석\p190872_local_chk_v09_gm.py
+
+--20250725
+D:\workspace\enc\쿼리분석\p190872_local_chk_v09_gm.py
+소스에서
+아래예시)와 같이
+",max(nvl(col_a, 'a')) ins_col_b"
+구문의 경우가
+원래 정식으로 ",max(nvl(col_a, 'a')) as ins_col_b" 처럼 되었어야 되지만
+"ins_col_b" 앞에 "as" 가 없어도 
+ "비교 CSV 파일" 과 "비교 DB 테이블"에 추출 및 등록되도록 소스 백업후 수정요청
+
+예시)
+select
+ col1
+,max(nvl(col_a, 'a')) ins_col_b
+from tb1
+;
