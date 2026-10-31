@@ -1,0 +1,102 @@
+1. 테이블헤더와 샘플데이터
+tablename,col_idx,col_name,data_type,part_col_yn
+tbl01,1,col01,string,Y  
+tbl01,2,col02,decimal(3,0),
+
+2. 검증쿼리요청
+위 데이터 기준으로
+db스키마가
+dev와 d2가 있을때
+minus 문을 사용해서
+part_col_yn 값이 Y인 PK조인을 통해
+두스키마기준 데이터가 일치하는지 확인하는 검증쿼리를 생성하기위한
+쿼리를 생성해주세요
+
+적용 기준
+1. 생성 쿼리는 MySQL 문법 사용
+2. 생성 쿼리 자체는 줄바꿈 없이 작성
+3. 생성 결과 SQL에만 CHAR(10) 적용
+4. WITH 절 사용
+5. MINUS 양방향 비교
+6. 전체 컬럼명 명시 (SELECT * 사용 안 함)
+7. part_col_yn = 'Y' 기준 PK 자동 생성 및 최종 PK 조인
+8. CONCAT_WS() 사용 금지
+9. GROUP_CONCAT() 사용 시 col_idx 순서 유지
+
+1. MySQL 전체 쿼리 생성문
+다음 조건을 모두 적용했습니다.
+- MySQL 문법으로 생성
+- CONCAT_WS() 사용 금지
+- 생성 쿼리 자체는 줄바꿈 없이 작성
+- 결과 SQL에만 CHAR(10) 적용
+- WITH 및 양방향 MINUS 사용
+- 컬럼 목록 명시
+- part_col_yn = 'Y' 기준 PK 자동 생성
+- 최종 결과에서 PK로 양쪽 원본 테이블 조인
+
+MINUS 비교: 전체 컬럼 사용
+최종 SELECT 조회: col02, col03 제외
+PK 컬럼: 최종 조회에 반드시 포함
+PK JOIN: = 사용
+정렬: ORDER BY 1, 2, 3...
+
+
+SET SESSION group_concat_max_len = 100000;
+
+WITH META AS (
+    SELECT tablename, col_idx, col_name, data_type, part_col_yn
+    FROM db_schma.table_metadata
+    WHERE tablename = 'tbl01'
+),
+COL_INFO AS (
+    SELECT
+          tablename
+        , GROUP_CONCAT(col_name ORDER BY col_idx SEPARATOR ', ') AS col_list
+        , GROUP_CONCAT(CASE WHEN TRIM(part_col_yn) = 'Y' THEN col_name END ORDER BY col_idx SEPARATOR ', ') AS pk_list
+        , GROUP_CONCAT(CASE WHEN TRIM(part_col_yn) = 'Y' THEN CONCAT('A.', col_name, ' <=> B.', col_name) END ORDER BY col_idx SEPARATOR ' AND ') AS pk_join_dev
+        , GROUP_CONCAT(CASE WHEN TRIM(part_col_yn) = 'Y' THEN CONCAT('A.', col_name, ' <=> C.', col_name) END ORDER BY col_idx SEPARATOR ' AND ') AS pk_join_d2
+        , GROUP_CONCAT(CONCAT('A.', col_name, ' AS DIFF_', col_name) ORDER BY col_idx SEPARATOR ', ') AS diff_cols
+        , GROUP_CONCAT(CONCAT('B.', col_name, ' AS DEV_', col_name) ORDER BY col_idx SEPARATOR ', ') AS dev_cols
+        , GROUP_CONCAT(CONCAT('C.', col_name, ' AS D2_', col_name) ORDER BY col_idx SEPARATOR ', ') AS d2_cols
+    FROM META
+    GROUP BY tablename
+)
+SELECT CONCAT(
+    'WITH DEV_D2_DIFF AS (', CHAR(10),
+    '    SELECT ', col_list, ', ''DEV_MINUS_D2'' AS DIFF_SIDE', CHAR(10),
+    '    FROM midp_crs_dev.', tablename, CHAR(10),
+    '    MINUS', CHAR(10),
+    '    SELECT ', col_list, ', ''DEV_MINUS_D2'' AS DIFF_SIDE', CHAR(10),
+    '    FROM midp_crs_d2.', tablename, CHAR(10),
+    '),', CHAR(10),
+    'D2_DEV_DIFF AS (', CHAR(10),
+    '    SELECT ', col_list, ', ''D2_MINUS_DEV'' AS DIFF_SIDE', CHAR(10),
+    '    FROM midp_crs_d2.', tablename, CHAR(10),
+    '    MINUS', CHAR(10),
+    '    SELECT ', col_list, ', ''D2_MINUS_DEV'' AS DIFF_SIDE', CHAR(10),
+    '    FROM midp_crs_dev.', tablename, CHAR(10),
+    '),', CHAR(10),
+    'ALL_DIFF AS (', CHAR(10),
+    '    SELECT ', col_list, ', DIFF_SIDE FROM midp_crs_dev_D2_DIFF', CHAR(10),
+    '    UNION ALL', CHAR(10),
+    '    SELECT ', col_list, ', DIFF_SIDE FROM midp_crs_d2_DEV_DIFF', CHAR(10),
+    ')', CHAR(10),
+    'SELECT', CHAR(10),
+    '       CASE', CHAR(10),
+    '           WHEN A.DIFF_SIDE = ''DEV_MINUS_D2'' AND C.', SUBSTRING_INDEX(pk_list, ', ', 1), ' IS NULL THEN ''DEV_ONLY''', CHAR(10),
+    '           WHEN A.DIFF_SIDE = ''D2_MINUS_DEV'' AND B.', SUBSTRING_INDEX(pk_list, ', ', 1), ' IS NULL THEN ''D2_ONLY''', CHAR(10),
+    '           ELSE ''DATA_DIFF''', CHAR(10),
+    '       END AS DIFF_TYPE,', CHAR(10),
+    '       A.DIFF_SIDE,', CHAR(10),
+    '       ', diff_cols, ',', CHAR(10),
+    '       ', dev_cols, ',', CHAR(10),
+    '       ', d2_cols, CHAR(10),
+    'FROM ALL_DIFF A', CHAR(10),
+    'LEFT JOIN dev.', tablename, ' B', CHAR(10),
+    '  ON ', pk_join_dev, CHAR(10),
+    'LEFT JOIN d2.', tablename, ' C', CHAR(10),
+    '  ON ', pk_join_d2, ';'
+) AS VALID_SQL
+FROM COL_INFO
+WHERE pk_list IS NOT NULL;
+

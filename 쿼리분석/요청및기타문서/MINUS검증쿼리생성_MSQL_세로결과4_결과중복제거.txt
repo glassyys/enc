@@ -1,0 +1,252 @@
+SET SESSION group_concat_max_len = 100000;
+
+SET @table_name = 'tbl01';
+SET @dev_schema = 'midp_crs_dev';
+SET @d2_schema = 'midp_crs_d2';
+SET @partition_value = '20261031';
+
+WITH META AS
+(
+    SELECT
+        /* MINUS 비교 컬럼: col02, col03 제외, next_col은 포함 */
+        GROUP_CONCAT(
+            CASE
+                WHEN part_col_yn = 'Y'
+                  OR col_name NOT IN ('col02', 'col03')
+                  OR col_idx = (
+                      SELECT MIN(col_idx)
+                      FROM db_schma.table_metadata
+                      WHERE tablename = @table_name
+                        AND col_idx > (
+                            SELECT MAX(col_idx)
+                            FROM db_schma.table_metadata
+                            WHERE tablename = @table_name
+                              AND part_col_yn = 'Y'
+                        )
+                  )
+                THEN col_name
+            END
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS minus_cols,
+
+        /* 파티션 WHERE 조건 */
+        GROUP_CONCAT(
+            CASE
+                WHEN part_col_yn = 'Y'
+                THEN CONCAT(
+                    col_name,
+                    ' = ''',
+                    @partition_value,
+                    ''''
+                )
+            END
+            ORDER BY col_idx
+            SEPARATOR ' AND '
+        ) AS partition_where,
+
+        /* PK 출력 컬럼 */
+        GROUP_CONCAT(
+            CASE
+                WHEN part_col_yn = 'Y'
+                THEN CONCAT(
+                    'A.', col_name,
+                    ' AS PK_', col_name
+                )
+            END
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS pk_output,
+
+        /* 최종 PK 별칭 */
+        GROUP_CONCAT(
+            CASE
+                WHEN part_col_yn = 'Y'
+                THEN CONCAT('PK_', col_name)
+            END
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS pk_final_cols,
+
+        /* DEV 전체 컬럼 */
+        GROUP_CONCAT(
+            CONCAT(
+                'B.', col_name,
+                ' AS DEV_', col_name
+            )
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS dev_enriched_cols,
+
+        /* D2 전체 컬럼 */
+        GROUP_CONCAT(
+            CONCAT(
+                'C.', col_name,
+                ' AS D2_', col_name
+            )
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS d2_enriched_cols,
+
+        /* 최종 DEV 출력 컬럼 */
+        GROUP_CONCAT(
+            CONCAT(
+                'DEV_', col_name,
+                ' AS ', col_name
+            )
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS dev_result_cols,
+
+        /* 최종 D2 출력 컬럼 */
+        GROUP_CONCAT(
+            CONCAT(
+                'D2_', col_name,
+                ' AS ', col_name
+            )
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS d2_result_cols,
+
+        /* DEV PK JOIN */
+        GROUP_CONCAT(
+            CASE
+                WHEN part_col_yn = 'Y'
+                THEN CONCAT(
+                    'A.', col_name,
+                    ' = B.', col_name
+                )
+            END
+            ORDER BY col_idx
+            SEPARATOR ' AND '
+        ) AS pk_join_dev,
+
+        /* D2 PK JOIN */
+        GROUP_CONCAT(
+            CASE
+                WHEN part_col_yn = 'Y'
+                THEN CONCAT(
+                    'A.', col_name,
+                    ' = C.', col_name
+                )
+            END
+            ORDER BY col_idx
+            SEPARATOR ' AND '
+        ) AS pk_join_d2,
+
+        /* 첫 번째 PK */
+        SUBSTRING_INDEX(
+            GROUP_CONCAT(
+                CASE
+                    WHEN part_col_yn = 'Y'
+                    THEN col_name
+                END
+                ORDER BY col_idx
+                SEPARATOR ', '
+            ),
+            ', ',
+            1
+        ) AS first_pk,
+
+        /* PK 다음 순서의 컬럼 */
+        (
+            SELECT col_name
+            FROM db_schma.table_metadata
+            WHERE tablename = @table_name
+              AND col_idx > (
+                  SELECT MAX(col_idx)
+                  FROM db_schma.table_metadata
+                  WHERE tablename = @table_name
+                    AND part_col_yn = 'Y'
+              )
+            ORDER BY col_idx
+            LIMIT 1
+        ) AS next_col
+
+    FROM db_schma.table_metadata
+    WHERE tablename = @table_name
+),
+
+/* PK 정렬 순서 생성 */
+PK_SEQ AS
+(
+    SELECT
+        col_idx,
+        ROW_NUMBER() OVER (
+            ORDER BY col_idx
+        ) AS RN
+    FROM db_schma.table_metadata
+    WHERE tablename = @table_name
+      AND part_col_yn = 'Y'
+),
+
+PK_ORDER AS
+(
+    SELECT
+        GROUP_CONCAT(
+            2 + RN
+            ORDER BY col_idx
+            SEPARATOR ', '
+        ) AS order_cols
+    FROM PK_SEQ
+)
+
+/* 최종 Spark SQL 생성 */
+SELECT
+    CONCAT(
+        'WITH D2_DEV_DIFF AS (', CHAR(10),
+        '    SELECT ', M.minus_cols,
+        ' FROM ', @d2_schema, '.', @table_name, CHAR(10),
+        '    WHERE ', M.partition_where, CHAR(10),
+        '    MINUS', CHAR(10),
+        '    SELECT ', M.minus_cols,
+        ' FROM ', @dev_schema, '.', @table_name, CHAR(10),
+        '    WHERE ', M.partition_where, CHAR(10),
+        '), ENRICHED AS (', CHAR(10),
+        '    SELECT', CHAR(10),
+        '        CASE', CHAR(10),
+        '            WHEN B.', M.first_pk,
+        ' IS NULL THEN ''D2_ONLY''', CHAR(10),
+        '            ELSE ''DATA_DIFF''', CHAR(10),
+        '        END AS DIFF_TYPE,', CHAR(10),
+        '        ', M.pk_output, ',', CHAR(10),
+        '        ', M.dev_enriched_cols, ',', CHAR(10),
+        '        ', M.d2_enriched_cols, CHAR(10),
+        '    FROM D2_DEV_DIFF A', CHAR(10),
+        '    LEFT JOIN ', @dev_schema, '.', @table_name,
+        ' B ON ', M.pk_join_dev,
+        ' AND A.', M.next_col, ' = B.', M.next_col,
+        CHAR(10),
+        '    LEFT JOIN ', @d2_schema, '.', @table_name,
+        ' C ON ', M.pk_join_d2,
+        ' AND A.', M.next_col, ' = C.', M.next_col,
+        CHAR(10),
+        '), RESULT AS (', CHAR(10),
+        '    SELECT DISTINCT', CHAR(10),
+        '        DIFF_TYPE,', CHAR(10),
+        '        ', M.pk_final_cols, ',', CHAR(10),
+        '        ''DEV'' AS DATA_SIDE,', CHAR(10),
+        '        ', M.dev_result_cols, ',', CHAR(10),
+        '        1 AS SIDE_ORDER', CHAR(10),
+        '    FROM ENRICHED', CHAR(10),
+        '    UNION ALL', CHAR(10),
+        '    SELECT DISTINCT', CHAR(10),
+        '        DIFF_TYPE,', CHAR(10),
+        '        ', M.pk_final_cols, ',', CHAR(10),
+        '        ''D2'' AS DATA_SIDE,', CHAR(10),
+        '        ', M.d2_result_cols, ',', CHAR(10),
+        '        2 AS SIDE_ORDER', CHAR(10),
+        '    FROM ENRICHED', CHAR(10),
+        ')', CHAR(10),
+        'SELECT', CHAR(10),
+        '    DIFF_TYPE,', CHAR(10),
+        '    ', M.pk_final_cols, ',', CHAR(10),
+        '    DATA_SIDE,', CHAR(10),
+        '    ', M.dev_result_cols, CHAR(10),
+        'FROM RESULT', CHAR(10),
+        'ORDER BY ',
+        P.order_cols,
+        ', SIDE_ORDER;'
+    ) AS GENERATED_SPARK_SQL
+FROM META M
+CROSS JOIN PK_ORDER P;
